@@ -45,8 +45,9 @@ Run a single test: `uv run pytest tests/path/to/test_x.py::test_name -x`.
 ## Design docs
 
 Before changing anything non-trivial, read:
-- `docs/stakeholders/2026-05-26-dooers-push-poc.md` — visual overview.
+- `docs/2026-05-26-dooers-push-poc.md` — visual overview for stakeholders.
 - `docs/superpowers/specs/2026-05-26-dooers-cli-v2-design.md` — full implementation spec.
+- `docs/superpowers/plans/2026-05-26-dooers-cli-v2-poc.md` — task-by-task implementation plan.
 
 ## Environment
 

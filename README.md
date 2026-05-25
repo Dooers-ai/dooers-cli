@@ -8,8 +8,9 @@ The Dooers creator-facing CLI and the push service it talks to. Monorepo with th
 
 ## Design docs
 
-- `docs/stakeholders/` — visual overview for stakeholders / product / leadership.
+- `docs/` — visual overview for stakeholders / product / leadership (e.g. `2026-05-26-dooers-push-poc.md`).
 - `docs/superpowers/specs/` — full implementation spec.
+- `docs/superpowers/plans/` — implementation plan(s) derived from the spec.
 
 ## Quickstart (per-package)
 

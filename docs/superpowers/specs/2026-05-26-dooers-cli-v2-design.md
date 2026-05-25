@@ -2,7 +2,7 @@
 
 **Status:** Draft for review
 **Date:** 2026-05-26
-**Companion doc:** `docs/stakeholders/2026-05-26-dooers-push-poc.md` (stakeholder-facing overview)
+**Companion doc:** `docs/2026-05-26-dooers-push-poc.md` (stakeholder-facing overview)
 
 ---
 
