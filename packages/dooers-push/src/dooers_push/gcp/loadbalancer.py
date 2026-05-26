@@ -160,3 +160,42 @@ class LBManager:
             f"https://www.googleapis.com/compute/v1/projects/{self.project_id}"
             f"/regions/{self.region}/networkEndpointGroups/{name}"
         )
+
+    async def _ensure_backend_service(self, agent_id: str, env: str, neg_url: str) -> str:
+        """Create or get the Backend Service. Returns its self-link URL."""
+        name = bs_name(agent_id, env)
+
+        backend = compute_v1.Backend(group=neg_url)
+        bs_resource = compute_v1.BackendService(
+            name=name,
+            protocol="HTTPS",
+            backends=[backend],
+        )
+        request = compute_v1.InsertBackendServiceRequest(
+            project=self.project_id,
+            backend_service_resource=bs_resource,
+        )
+
+        client = compute_v1.BackendServicesClient()
+        loop = asyncio.get_running_loop()
+
+        def _insert() -> None:
+            op = client.insert(request=request)
+            op.result(timeout=120)
+
+        try:
+            await loop.run_in_executor(None, _insert)
+            logger.info("lb_op=ensure_bs agent_id=%s env=%s bs=created", agent_id, env)
+        except gcp_exceptions.Conflict:
+            logger.info("lb_op=ensure_bs agent_id=%s env=%s bs=already_exists", agent_id, env)
+        except gcp_exceptions.PermissionDenied as e:
+            raise LBError(f"permission denied creating BS {name}: {e}",
+                          operation="ensure_bs", cause=e) from e
+        except gcp_exceptions.GoogleAPIError as e:
+            raise LBError(f"failed to create BS {name}: {e}",
+                          operation="ensure_bs", cause=e) from e
+
+        return (
+            f"https://www.googleapis.com/compute/v1/projects/{self.project_id}"
+            f"/global/backendServices/{name}"
+        )

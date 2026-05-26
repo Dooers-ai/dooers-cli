@@ -78,3 +78,47 @@ async def test_ensure_neg_raises_lberror_on_permission_denied() -> None:
         with pytest.raises(LBError) as exc_info:
             await lb._ensure_neg("ag_7q4r", "dev")
         assert "no perms" in str(exc_info.value).lower() or "permission" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_ensure_bs_creates_when_missing() -> None:
+    lb = LBManager(_settings())
+    mock_client = MagicMock()
+    mock_op = MagicMock()
+    mock_op.result.return_value = None
+    mock_client.insert.return_value = mock_op
+
+    neg_url = (
+        "https://www.googleapis.com/compute/v1/projects/test-project"
+        "/regions/us-central1/networkEndpointGroups/agent-ag-7q4r-dev-neg"
+    )
+
+    with patch(
+        "dooers_push.gcp.loadbalancer.compute_v1.BackendServicesClient",
+        return_value=mock_client,
+    ):
+        await lb._ensure_backend_service("ag_7q4r", "dev", neg_url)
+
+    mock_client.insert.assert_called_once()
+    args, kwargs = mock_client.insert.call_args
+    bs = kwargs["request"].backend_service_resource
+    assert bs.name == "agent-ag-7q4r-dev-bs"
+    assert bs.protocol == "HTTPS"
+    assert len(bs.backends) == 1
+    assert bs.backends[0].group == neg_url
+
+
+@pytest.mark.asyncio
+async def test_ensure_bs_is_noop_when_already_exists() -> None:
+    lb = LBManager(_settings())
+    mock_client = MagicMock()
+    mock_op = MagicMock()
+    mock_op.result.side_effect = gcp_exceptions.Conflict("already exists")
+    mock_client.insert.return_value = mock_op
+
+    with patch(
+        "dooers_push.gcp.loadbalancer.compute_v1.BackendServicesClient",
+        return_value=mock_client,
+    ):
+        await lb._ensure_backend_service("ag_7q4r", "dev", "neg-url")
+    # No raise = success
