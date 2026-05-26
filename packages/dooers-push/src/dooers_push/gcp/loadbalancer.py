@@ -79,6 +79,8 @@ import logging
 from typing import TYPE_CHECKING
 
 import httpx
+from google.api_core import exceptions as gcp_exceptions
+from google.cloud import compute_v1
 
 if TYPE_CHECKING:
     from dooers_push.settings import Settings
@@ -115,3 +117,46 @@ class LBManager:
     async def wait_until_reachable(self, url: str, timeout_s: int = 90) -> None:
         """Poll the URL until it returns a non-default response."""
         raise NotImplementedError("filled in Task L.8")
+
+    # ---- internal --------------------------------------------------------
+
+    async def _ensure_neg(self, agent_id: str, env: str) -> str:
+        """Create or get the Serverless NEG. Returns its self-link URL."""
+        name = neg_name(agent_id, env)
+        cloud_run_service = f"{safe_agent_id(agent_id)}-{env}"
+
+        neg_resource = compute_v1.NetworkEndpointGroup(
+            name=name,
+            network_endpoint_type="SERVERLESS",
+            cloud_run=compute_v1.NetworkEndpointGroupCloudRun(service=cloud_run_service),
+        )
+        request = compute_v1.InsertRegionNetworkEndpointGroupRequest(
+            project=self.project_id,
+            region=self.region,
+            network_endpoint_group_resource=neg_resource,
+        )
+
+        client = compute_v1.RegionNetworkEndpointGroupsClient()
+        loop = asyncio.get_running_loop()
+
+        def _insert() -> None:
+            op = client.insert(request=request)
+            op.result(timeout=120)
+
+        try:
+            await loop.run_in_executor(None, _insert)
+            logger.info("lb_op=ensure_neg agent_id=%s env=%s neg=created", agent_id, env)
+        except gcp_exceptions.Conflict:
+            logger.info("lb_op=ensure_neg agent_id=%s env=%s neg=already_exists", agent_id, env)
+        except gcp_exceptions.PermissionDenied as e:
+            raise LBError(f"permission denied creating NEG {name}: {e}",
+                          operation="ensure_neg", cause=e) from e
+        except gcp_exceptions.GoogleAPIError as e:
+            raise LBError(f"failed to create NEG {name}: {e}",
+                          operation="ensure_neg", cause=e) from e
+
+        # Self-link form used by Backend Service refs:
+        return (
+            f"https://www.googleapis.com/compute/v1/projects/{self.project_id}"
+            f"/regions/{self.region}/networkEndpointGroups/{name}"
+        )

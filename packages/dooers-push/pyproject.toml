@@ -18,6 +18,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "google-cloud-storage>=2.18.0",
     "google-cloud-build>=3.27.0",
+    "google-cloud-compute>=1.20.0",
     "google-cloud-run>=0.10.0",
     "dooers-protocol",
 ]
