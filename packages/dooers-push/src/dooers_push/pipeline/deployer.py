@@ -38,7 +38,7 @@ class DeployerStep(PipelineStep):
             )
             ctx.build_id = op_name
             ctx.image = image
-            success = await wait_for_build(op_name)
+            success = await wait_for_build(op_name, project_id=self.settings.gcp_project_id)
             if not success:
                 return StepResult(status=BuildStatus.failed,
                                   error="Cloud Build reported failure")
