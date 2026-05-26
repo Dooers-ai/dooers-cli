@@ -298,3 +298,43 @@ async def test_wait_until_reachable_returns_on_timeout_without_raising() -> None
     ):
         # Should NOT raise on timeout — logs a warning instead.
         await lb.wait_until_reachable("https://ag-test.agents.dooers.ai", timeout_s=1)
+
+
+@pytest.mark.asyncio
+async def test_unregister_agent_removes_in_correct_order() -> None:
+    lb = LBManager(_settings())
+    calls: list[str] = []
+
+    async def _record_url_map(*args, **kwargs):
+        calls.append("url_map")
+
+    async def _record_bs(*args, **kwargs):
+        calls.append("bs")
+
+    async def _record_neg(*args, **kwargs):
+        calls.append("neg")
+
+    with (
+        patch.object(lb, "_remove_url_map_host_rule", side_effect=_record_url_map),
+        patch.object(lb, "_delete_backend_service", side_effect=_record_bs),
+        patch.object(lb, "_delete_neg", side_effect=_record_neg),
+    ):
+        await lb.unregister_agent("ag_7q4r", "dev")
+
+    assert calls == ["url_map", "bs", "neg"]
+
+
+@pytest.mark.asyncio
+async def test_unregister_agent_ignores_missing_resources() -> None:
+    lb = LBManager(_settings())
+
+    async def _raise_not_found(*args, **kwargs):
+        raise gcp_exceptions.NotFound("gone")
+
+    with (
+        patch.object(lb, "_remove_url_map_host_rule", side_effect=_raise_not_found),
+        patch.object(lb, "_delete_backend_service", side_effect=_raise_not_found),
+        patch.object(lb, "_delete_neg", side_effect=_raise_not_found),
+    ):
+        # Should not raise — delete is idempotent.
+        await lb.unregister_agent("ag_7q4r", "dev")

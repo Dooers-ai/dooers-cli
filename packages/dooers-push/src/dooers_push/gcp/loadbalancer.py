@@ -108,8 +108,63 @@ class LBManager:
         return f"https://{host}"
 
     async def unregister_agent(self, agent_id: str, env: str) -> None:
-        """Reverse of register_agent. Used on agent delete."""
-        raise NotImplementedError("filled in Task L.9")
+        """Reverse of register_agent. Removes in order: URL Map rule, BS, NEG."""
+        host = host_for(agent_id, env, self.domain)
+
+        for step_fn, op_name in (
+            (lambda: self._remove_url_map_host_rule(agent_id, env, host=host), "remove_url_map"),
+            (lambda: self._delete_backend_service(agent_id, env), "delete_bs"),
+            (lambda: self._delete_neg(agent_id, env), "delete_neg"),
+        ):
+            try:
+                await step_fn()
+            except gcp_exceptions.NotFound:
+                logger.info("lb_op=%s agent_id=%s env=%s already_gone",
+                            op_name, agent_id, env)
+            except gcp_exceptions.GoogleAPIError as e:
+                raise LBError(f"unregister failed at {op_name}: {e}",
+                              operation=op_name, cause=e) from e
+
+    async def _remove_url_map_host_rule(self, agent_id: str, env: str, *, host: str) -> None:
+        pm = path_matcher_name(agent_id, env)
+        client = compute_v1.UrlMapsClient()
+        loop = asyncio.get_running_loop()
+
+        def _patch() -> None:
+            url_map = client.get(project=self.project_id, url_map=self.url_map_name)
+            url_map.host_rules = [hr for hr in url_map.host_rules if host not in hr.hosts]
+            url_map.path_matchers = [m for m in url_map.path_matchers if m.name != pm]
+            op = client.patch(project=self.project_id, url_map=self.url_map_name,
+                              url_map_resource=url_map)
+            op.result(timeout=120)
+
+        await loop.run_in_executor(None, _patch)
+
+    async def _delete_backend_service(self, agent_id: str, env: str) -> None:
+        name = bs_name(agent_id, env)
+        client = compute_v1.BackendServicesClient()
+        loop = asyncio.get_running_loop()
+
+        def _delete() -> None:
+            op = client.delete(project=self.project_id, backend_service=name)
+            op.result(timeout=120)
+
+        await loop.run_in_executor(None, _delete)
+
+    async def _delete_neg(self, agent_id: str, env: str) -> None:
+        name = neg_name(agent_id, env)
+        client = compute_v1.RegionNetworkEndpointGroupsClient()
+        loop = asyncio.get_running_loop()
+
+        def _delete() -> None:
+            op = client.delete(
+                project=self.project_id,
+                region=self.region,
+                network_endpoint_group=name,
+            )
+            op.result(timeout=120)
+
+        await loop.run_in_executor(None, _delete)
 
     async def wait_until_reachable(self, url: str, timeout_s: int = 90) -> None:
         """Poll the URL until it returns a non-default response or timeout."""
