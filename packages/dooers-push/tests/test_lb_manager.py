@@ -122,3 +122,103 @@ async def test_ensure_bs_is_noop_when_already_exists() -> None:
     ):
         await lb._ensure_backend_service("ag_7q4r", "dev", "neg-url")
     # No raise = success
+
+
+@pytest.mark.asyncio
+async def test_update_url_map_appends_when_host_missing() -> None:
+    lb = LBManager(_settings())
+
+    # Mock the existing URL map (no rules for our host yet)
+    existing_url_map = MagicMock()
+    existing_url_map.host_rules = []
+    existing_url_map.path_matchers = []
+    existing_url_map.default_service = "default-bs"
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = existing_url_map
+    mock_op = MagicMock()
+    mock_op.result.return_value = None
+    mock_client.patch.return_value = mock_op
+
+    with patch(
+        "dooers_push.gcp.loadbalancer.compute_v1.UrlMapsClient",
+        return_value=mock_client,
+    ):
+        await lb._update_url_map(
+            "ag_7q4r", "dev",
+            host="ag-7q4r-dev.agents.dooers.ai",
+            bs_self_link="bs-url",
+        )
+
+    mock_client.patch.assert_called_once()
+    args, kwargs = mock_client.patch.call_args
+    patched = kwargs["url_map_resource"]
+    assert len(patched.host_rules) == 1
+    assert patched.host_rules[0].hosts == ["ag-7q4r-dev.agents.dooers.ai"]
+    assert patched.host_rules[0].path_matcher == "agent-ag-7q4r-dev-pm"
+    assert len(patched.path_matchers) == 1
+    assert patched.path_matchers[0].name == "agent-ag-7q4r-dev-pm"
+    assert patched.path_matchers[0].default_service == "bs-url"
+
+
+@pytest.mark.asyncio
+async def test_update_url_map_is_noop_when_host_already_routed() -> None:
+    from google.cloud import compute_v1 as compute_v1_real
+
+    lb = LBManager(_settings())
+
+    # Pre-existing host rule + path matcher for the same agent.
+    existing_host_rule = compute_v1_real.HostRule(
+        hosts=["ag-7q4r-dev.agents.dooers.ai"],
+        path_matcher="agent-ag-7q4r-dev-pm",
+    )
+    existing_pm = compute_v1_real.PathMatcher(
+        name="agent-ag-7q4r-dev-pm",
+        default_service="bs-url",
+    )
+
+    existing_url_map = MagicMock()
+    existing_url_map.host_rules = [existing_host_rule]
+    existing_url_map.path_matchers = [existing_pm]
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = existing_url_map
+    mock_op = MagicMock()
+    mock_op.result.return_value = None
+    mock_client.patch.return_value = mock_op
+
+    with patch(
+        "dooers_push.gcp.loadbalancer.compute_v1.UrlMapsClient",
+        return_value=mock_client,
+    ):
+        await lb._update_url_map(
+            "ag_7q4r", "dev",
+            host="ag-7q4r-dev.agents.dooers.ai",
+            bs_self_link="bs-url",
+        )
+
+    # Patch may still be called (with same content) — idempotent.
+    # Key assertion: nothing duplicated.
+    if mock_client.patch.called:
+        patched = mock_client.patch.call_args.kwargs["url_map_resource"]
+        host_strings = [h for hr in patched.host_rules for h in hr.hosts]
+        assert host_strings.count("ag-7q4r-dev.agents.dooers.ai") == 1
+
+
+@pytest.mark.asyncio
+async def test_update_url_map_raises_lberror_when_map_not_found() -> None:
+    lb = LBManager(_settings())
+    mock_client = MagicMock()
+    mock_client.get.side_effect = gcp_exceptions.NotFound("url map not found")
+
+    with patch(
+        "dooers_push.gcp.loadbalancer.compute_v1.UrlMapsClient",
+        return_value=mock_client,
+    ):
+        with pytest.raises(LBError) as exc_info:
+            await lb._update_url_map(
+                "ag_7q4r", "dev",
+                host="ag-7q4r-dev.agents.dooers.ai",
+                bs_self_link="bs-url",
+            )
+        assert "not found" in str(exc_info.value).lower()

@@ -199,3 +199,66 @@ class LBManager:
             f"https://www.googleapis.com/compute/v1/projects/{self.project_id}"
             f"/global/backendServices/{name}"
         )
+
+    async def _update_url_map(self, agent_id: str, env: str, *,
+                              host: str, bs_self_link: str) -> None:
+        """Add or update the host rule + path matcher for this agent."""
+        pm = path_matcher_name(agent_id, env)
+        client = compute_v1.UrlMapsClient()
+        loop = asyncio.get_running_loop()
+
+        def _get_and_patch() -> None:
+            try:
+                url_map = client.get(project=self.project_id, url_map=self.url_map_name)
+            except gcp_exceptions.NotFound as e:
+                raise LBError(
+                    f"URL map {self.url_map_name!r} not found — has devops completed gcp-lb.md setup?",
+                    operation="url_map_get",
+                    cause=e,
+                ) from e
+
+            # Find existing rule for this host (if any)
+            existing_pm_idx = None
+            existing_hr_idx = None
+            for i, pm_obj in enumerate(url_map.path_matchers):
+                if pm_obj.name == pm:
+                    existing_pm_idx = i
+                    break
+            for i, hr in enumerate(url_map.host_rules):
+                if host in hr.hosts:
+                    existing_hr_idx = i
+                    break
+
+            # Build new path matcher
+            new_pm = compute_v1.PathMatcher(name=pm, default_service=bs_self_link)
+            if existing_pm_idx is not None:
+                url_map.path_matchers[existing_pm_idx] = new_pm
+            else:
+                url_map.path_matchers.append(new_pm)
+
+            # Build new host rule
+            new_hr = compute_v1.HostRule(hosts=[host], path_matcher=pm)
+            if existing_hr_idx is not None:
+                url_map.host_rules[existing_hr_idx] = new_hr
+            else:
+                url_map.host_rules.append(new_hr)
+
+            op = client.patch(
+                project=self.project_id,
+                url_map=self.url_map_name,
+                url_map_resource=url_map,
+            )
+            op.result(timeout=120)
+
+        try:
+            await loop.run_in_executor(None, _get_and_patch)
+            logger.info("lb_op=update_url_map agent_id=%s env=%s host=%s ok",
+                        agent_id, env, host)
+        except LBError:
+            raise
+        except gcp_exceptions.PermissionDenied as e:
+            raise LBError(f"permission denied patching URL Map: {e}",
+                          operation="url_map_patch", cause=e) from e
+        except gcp_exceptions.GoogleAPIError as e:
+            raise LBError(f"failed to patch URL Map: {e}",
+                          operation="url_map_patch", cause=e) from e
