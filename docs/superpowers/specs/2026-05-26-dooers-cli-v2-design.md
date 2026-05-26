@@ -2,7 +2,7 @@
 
 **Status:** Draft for review
 **Date:** 2026-05-26
-**Companion doc:** `docs/2026-05-26-dooers-push-poc.md` (stakeholder-facing overview)
+**Companion doc:** `docs/dooers-cli.md` (stakeholder-facing overview)
 **Implementation plan:** `docs/superpowers/plans/2026-05-26-dooers-cli-v2-poc.md`
 
 ---
@@ -244,7 +244,7 @@ dooers-cli/                              # the repo (Dooers-ai/dooers-cli on Git
 ├── cloudbuild/
 │   └── cloudbuild.yaml                  # unchanged from v1
 ├── docs/
-│   ├── 2026-05-26-dooers-push-poc.md    # stakeholder overview
+│   ├── dooers-cli.md                    # stakeholder overview
 │   └── superpowers/
 │       ├── specs/2026-05-26-dooers-cli-v2-design.md   # this file
 │       └── plans/2026-05-26-dooers-cli-v2-poc.md
