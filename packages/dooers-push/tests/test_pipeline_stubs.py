@@ -27,7 +27,7 @@ async def test_auditor_and_provisioner_stubs_pass_through() -> None:
             updated_at=now,
         ),
         user=AuthSession(user_id="u_1", email="t@example.com"),
-        gcs_uri="gs://bucket/path",
+        gcs_uri="local://no-gcs",
         tag="latest",
         env="dev",
     )
