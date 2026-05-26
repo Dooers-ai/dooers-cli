@@ -101,17 +101,21 @@ Topology of the routing path. Five durable platform resources (created by devops
 ### URL convention
 
 ```
-https://{agent_id_safe}-{env}.{lb_domain}
-       ↑                ↑     ↑
-       │                │     └── DOOERS_LB_DOMAIN (default: agents.dooers.ai)
-       │                └─── prod | stg | dev
-       └─── lowercase, underscores → hyphens (DNS-safe)
+prod:      https://{agent_id_safe}.{lb_domain}
+non-prod:  https://{agent_id_safe}-{env}.{lb_domain}
+                                     ↑     ↑
+                                     │     └── DOOERS_LB_DOMAIN (default: agents.dooers.ai)
+                                     └─── stg | dev
 ```
 
+Prod intentionally drops the env suffix — production URLs should be the cleanest. Non-prod envs keep the suffix so they're visually distinguishable and impossible to confuse with prod.
+
 Examples:
-- `https://ag-7q4r-dev.agents.dooers.ai`
-- `https://ag-8h2k-prod.agents.dooers.ai`
-- `https://ag-3m1p-stg.agents.dooers.ai`
+- `https://ag-7q4r.agents.dooers.ai` (prod)
+- `https://ag-7q4r-dev.agents.dooers.ai` (dev)
+- `https://ag-7q4r-stg.agents.dooers.ai` (staging)
+
+Note that **only the public host is asymmetric**. The internal GCP resource names (NEG, Backend Service, Cloud Run service) keep the env suffix in all envs for consistency and easy filtering: `agent-ag-7q4r-prod-neg`, `agent-ag-7q4r-prod-bs`, Cloud Run service `ag-7q4r-prod`.
 
 ### Boundary rules
 
@@ -217,10 +221,16 @@ def safe_agent_id(agent_id: str) -> str:
 def host_for(agent_id: str, env: str, lb_domain: str) -> str:
     """Return the per-agent LB hostname.
 
+    Prod drops the env suffix; non-prod keeps it.
+    host_for('ag_7q4r', 'prod', 'agents.dooers.ai')
+    → 'ag-7q4r.agents.dooers.ai'
     host_for('ag_7q4r', 'dev', 'agents.dooers.ai')
     → 'ag-7q4r-dev.agents.dooers.ai'
     """
-    return f"{safe_agent_id(agent_id)}-{env}.{lb_domain}"
+    safe = safe_agent_id(agent_id)
+    if env == "prod":
+        return f"{safe}.{lb_domain}"
+    return f"{safe}-{env}.{lb_domain}"
 
 
 def neg_name(agent_id: str, env: str) -> str:
