@@ -73,6 +73,7 @@ async def push(
             image=ctx.image or "",
             status=BuildStatus.failed,
             error=result.error,
+            audit=ctx.audit_report,
         )
 
     # Build + LB registration succeeded → URL comes from ctx.lb_url.
@@ -84,6 +85,7 @@ async def push(
             image=ctx.image or "",
             status=BuildStatus.failed,
             error="internal: deployer reported success but no lb_url set",
+            audit=ctx.audit_report,
         )
 
     await core.patch_agent_url(agent_id, ctx.lb_url)
@@ -93,4 +95,5 @@ async def push(
         image=ctx.image or "",
         status=BuildStatus.succeeded,
         url=ctx.lb_url,
+        audit=ctx.audit_report,
     )

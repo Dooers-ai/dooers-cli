@@ -92,6 +92,15 @@ def push(
         os.unlink(archive_path)
 
     # Report.
+    if resp.audit and resp.audit.required_infra.detected_endpoints:
+        endpoints = resp.audit.required_infra.detected_endpoints
+        typer.echo(f"\nAudit: {len(endpoints)} endpoint(s) detected:")
+        for ep in endpoints[:10]:
+            typer.echo(f"  - {ep}")
+        if len(endpoints) > 10:
+            typer.echo(f"  … and {len(endpoints) - 10} more")
+    elif resp.audit:
+        typer.echo("\nAudit: 0 endpoints detected.")
     if resp.status.value == "succeeded" and resp.url:
         typer.echo(f"\nLive at: {resp.url}")
     else:
