@@ -253,3 +253,48 @@ async def test_register_agent_prod_drops_env_suffix_in_url() -> None:
         url = await lb.register_agent("ag_7q4r", "prod")
 
     assert url == "https://ag-7q4r.agents.dooers.ai"
+
+
+@pytest.mark.asyncio
+async def test_wait_until_reachable_returns_on_first_success() -> None:
+    from unittest.mock import AsyncMock
+
+    lb = LBManager(_settings())
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = False
+    mock_client.get.return_value = mock_response
+
+    with patch(
+        "dooers_push.gcp.loadbalancer.httpx.AsyncClient",
+        return_value=mock_client,
+    ):
+        # Should return without raising
+        await lb.wait_until_reachable("https://ag-test.agents.dooers.ai", timeout_s=5)
+
+
+@pytest.mark.asyncio
+async def test_wait_until_reachable_returns_on_timeout_without_raising() -> None:
+    import httpx as httpx_mod
+
+    lb = LBManager(_settings())
+
+    # Mock httpx.AsyncClient where every request raises ConnectError
+    class FailingClient:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def get(self, *args, **kwargs):
+            raise httpx_mod.ConnectError("nope")
+
+    with patch(
+        "dooers_push.gcp.loadbalancer.httpx.AsyncClient",
+        return_value=FailingClient(),
+    ):
+        # Should NOT raise on timeout — logs a warning instead.
+        await lb.wait_until_reachable("https://ag-test.agents.dooers.ai", timeout_s=1)

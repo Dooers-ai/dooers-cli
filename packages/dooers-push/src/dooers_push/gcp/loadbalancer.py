@@ -112,8 +112,24 @@ class LBManager:
         raise NotImplementedError("filled in Task L.9")
 
     async def wait_until_reachable(self, url: str, timeout_s: int = 90) -> None:
-        """Poll the URL until it returns a non-default response."""
-        raise NotImplementedError("filled in Task L.8")
+        """Poll the URL until it returns a non-default response or timeout."""
+        deadline = asyncio.get_event_loop().time() + timeout_s
+
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    response = await client.get(url)
+                    if response.status_code < 500:
+                        # LB is responding; rule has propagated.
+                        return
+                except httpx.HTTPError:
+                    pass
+                await asyncio.sleep(1.0)
+
+        logger.warning(
+            "lb_op=wait_until_reachable url=%s timed_out_after=%ds (LB will propagate shortly)",
+            url, timeout_s,
+        )
 
     # ---- internal --------------------------------------------------------
 
