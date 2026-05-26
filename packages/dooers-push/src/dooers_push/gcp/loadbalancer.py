@@ -98,17 +98,14 @@ class LBManager:
         self.domain = settings.lb_domain
 
     async def register_agent(self, agent_id: str, env: str) -> str:
-        """Wire {agent_id}-{env} Cloud Run into the LB; return the URL.
+        """Wire {agent_id}-{env} Cloud Run into the LB; return the URL."""
+        host = host_for(agent_id, env, self.domain)
 
-        Steps (each idempotent):
-        1. Ensure Serverless NEG exists.
-        2. Ensure Backend Service exists; attach NEG.
-        3. Update URL Map to include host rule + path matcher.
-        4. Return the full HTTPS URL.
+        neg_url = await self._ensure_neg(agent_id, env)
+        bs_url = await self._ensure_backend_service(agent_id, env, neg_url)
+        await self._update_url_map(agent_id, env, host=host, bs_self_link=bs_url)
 
-        Raises LBError on any GCP failure.
-        """
-        raise NotImplementedError("filled in Task L.7")
+        return f"https://{host}"
 
     async def unregister_agent(self, agent_id: str, env: str) -> None:
         """Reverse of register_agent. Used on agent delete."""

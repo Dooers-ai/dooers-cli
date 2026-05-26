@@ -222,3 +222,34 @@ async def test_update_url_map_raises_lberror_when_map_not_found() -> None:
                 bs_self_link="bs-url",
             )
         assert "not found" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_register_agent_orchestrates_calls_and_returns_url() -> None:
+    lb = LBManager(_settings())
+
+    with (
+        patch.object(lb, "_ensure_neg", return_value="neg-url") as m_neg,
+        patch.object(lb, "_ensure_backend_service", return_value="bs-url") as m_bs,
+        patch.object(lb, "_update_url_map", return_value=None) as m_url_map,
+    ):
+        url = await lb.register_agent("ag_7q4r", "dev")
+
+    m_neg.assert_called_once_with("ag_7q4r", "dev")
+    m_bs.assert_called_once_with("ag_7q4r", "dev", "neg-url")
+    m_url_map.assert_called_once()
+    assert url == "https://ag-7q4r-dev.agents.dooers.ai"
+
+
+@pytest.mark.asyncio
+async def test_register_agent_prod_drops_env_suffix_in_url() -> None:
+    lb = LBManager(_settings())
+
+    with (
+        patch.object(lb, "_ensure_neg", return_value="neg-url"),
+        patch.object(lb, "_ensure_backend_service", return_value="bs-url"),
+        patch.object(lb, "_update_url_map", return_value=None),
+    ):
+        url = await lb.register_agent("ag_7q4r", "prod")
+
+    assert url == "https://ag-7q4r.agents.dooers.ai"
