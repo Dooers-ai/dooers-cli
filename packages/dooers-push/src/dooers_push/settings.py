@@ -13,17 +13,24 @@ class Settings:
     core_api_url: str
     environment: str
     request_timeout: int
+    lb_domain: str
+    lb_url_map: str
+    lb_region: str
 
     @classmethod
     def from_env(cls) -> "Settings":
+        gcp_region = os.environ.get("GCP_REGION", "us-central1")
         return cls(
             gcp_project_id=_required("GCP_PROJECT_ID"),
-            gcp_region=os.environ.get("GCP_REGION", "us-central1"),
+            gcp_region=gcp_region,
             bucket_name=_required("BUCKET_NAME"),
             artifact_repo=os.environ.get("ARTIFACT_REPO", "agents"),
             core_api_url=os.environ.get("CORE_API_URL", "https://api.dooers.ai"),
             environment=os.environ.get("ENVIRONMENT", "dev"),
             request_timeout=int(os.environ.get("REQUEST_TIMEOUT", "10")),
+            lb_domain=os.environ.get("DOOERS_LB_DOMAIN", "agents.dooers.ai"),
+            lb_url_map=os.environ.get("DOOERS_LB_URL_MAP", "dooers-agents-url-map"),
+            lb_region=os.environ.get("DOOERS_LB_REGION", gcp_region),
         )
 
 

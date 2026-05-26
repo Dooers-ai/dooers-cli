@@ -26,6 +26,7 @@ class PipelineContext(BaseModel):
     provisioned_env: dict[str, str] = {}
     build_id: str | None = None
     image: str | None = None
+    lb_url: str | None = None
 
 
 class StepResult(BaseModel):

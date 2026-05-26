@@ -14,6 +14,7 @@ class ErrorCode(str, Enum):
     build_failed = "build_failed"
     build_timeout = "build_timeout"
     core_unreachable = "core_unreachable"
+    lb_registration_failed = "lb_registration_failed"
     internal = "internal"
 
 
