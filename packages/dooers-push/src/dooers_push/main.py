@@ -1,10 +1,15 @@
 """FastAPI routes. Skinny — logic lives in pipeline/ and gcp/."""
 
 import logging
+import os
 import uuid
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from dooers_protocol.errors import ErrorCode, ErrorEnvelope
@@ -28,6 +33,21 @@ app = FastAPI(
     version="0.1.0",
     description="Owns the push pipeline backing `dooers push`.",
 )
+
+# TrustedHost middleware. In production, restrict accepted Host headers
+# to prevent host header spoofing. TRUSTED_HOSTS is a comma-separated list
+# (e.g., "push.dooers.ai,push.dev.dooers.ai"). Defaults to "*" (off) so
+# the demo and tests work out of the box.
+if os.environ.get("ENVIRONMENT") == "prod":
+    trusted_hosts = os.environ.get("TRUSTED_HOSTS", "*").split(",")
+    if "*" not in trusted_hosts:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=trusted_hosts)
+
+# Rate limiting. In-memory store is fine for Cloud Run — each instance
+# enforces independently. Per-IP key. Configurable via env var.
+limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # Validate required env vars at startup so misconfiguration fails fast,
@@ -65,6 +85,7 @@ def health() -> dict[str, str]:
 
 
 @app.post("/v1/push/{agent_id}")
+@limiter.limit(os.getenv("RATE_LIMIT_PUSH", "10/minute"))
 async def push(
     agent_id: str,
     request: Request,

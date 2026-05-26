@@ -45,6 +45,8 @@ parse_env_file() {{
         done < "$$file"
     fi
 }}
+# Try env.{env} file first (if creator provides per-env values), then .env as fallback.
+[ -f "env.{env}" ] && parse_env_file "env.{env}"
 [ -f ".env" ] && parse_env_file ".env"
 ALL_ENV_VARS="{base_env_vars_str}"
 if [ -n "$$AGENT_ENV_VARS" ]; then
