@@ -1,12 +1,24 @@
-"""FastAPI routes — thin. Logic lives in pipeline/ and gcp/.
+"""FastAPI routes. Skinny — logic lives in pipeline/ and gcp/."""
 
-POC scaffold — actual implementation lands in the next milestone.
-See docs/superpowers/specs/2026-05-26-dooers-cli-v2-design.md §5.3.
-"""
+import logging
+import uuid
 
-from fastapi import FastAPI, File, Query, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 
 from dooers_protocol.push import BuildStatus, PushResponse
+from dooers_push import storage
+from dooers_push.auth import verify_session
+from dooers_push.core_client import CoreClient
+from dooers_push.pipeline import (
+    AuditorStep,
+    DeployerStep,
+    PipelineContext,
+    ProvisionerStep,
+    run_pipeline,
+)
+from dooers_push.settings import Settings
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="dooers-push",
@@ -28,22 +40,57 @@ async def push(
     tag: str = Query("latest"),
     env: str = Query("prod"),
 ) -> PushResponse:
-    """Run the push pipeline for `agent_id` synchronously.
+    """Run the synchronous push pipeline for `agent_id`."""
+    correlation_id = str(uuid.uuid4())
+    settings = Settings.from_env()
+    logger.info("push start: agent_id=%s correlation_id=%s", agent_id, correlation_id)
 
-    POC scaffold returns a placeholder failed status. Full flow:
-    1. verify session against core
-    2. resolve agent_id + ownership check via core
-    3. upload archive to GCS
-    4. pipeline.run(auditor, provisioner, deployer)
-    5. poll Cloud Build until done
-    6. describe Cloud Run service URL
-    7. PATCH /agents/{id} with url
-    8. return PushResponse
-    """
+    if not archive.filename or not archive.filename.endswith((".tar.gz", ".tgz", ".zip")):
+        raise HTTPException(status_code=400, detail="archive must be .tar.gz/.tgz/.zip")
+
+    session = await verify_session(request, settings)
+    token = request.headers["Authorization"][len("Bearer "):]
+    core = CoreClient(base_url=settings.core_api_url, token=token)
+    agent = await core.get_agent(agent_id, fallback_session=session)
+    if agent.owner_user_id != session.user_id:
+        raise HTTPException(status_code=403, detail=f"you do not own {agent_id}")
+
+    gcs_uri = await storage.upload_archive(
+        settings, agent_id, archive, owner_user_id=session.user_id
+    )
+
+    ctx = PipelineContext(
+        agent=agent, user=session, gcs_uri=gcs_uri, tag=tag, env=env,
+    )
+    result = await run_pipeline(
+        ctx, [AuditorStep(), ProvisionerStep(), DeployerStep(settings)]
+    )
+
+    if result.status == BuildStatus.failed:
+        return PushResponse(
+            agent_id=agent_id,
+            build_id=ctx.build_id or "",
+            image=ctx.image or "",
+            status=BuildStatus.failed,
+            error=result.error,
+        )
+
+    # Build + LB registration succeeded → URL comes from ctx.lb_url.
+    if not ctx.lb_url:
+        # Defensive: should never happen on success path.
+        return PushResponse(
+            agent_id=agent_id,
+            build_id=ctx.build_id or "",
+            image=ctx.image or "",
+            status=BuildStatus.failed,
+            error="internal: deployer reported success but no lb_url set",
+        )
+
+    await core.patch_agent_url(agent_id, ctx.lb_url)
     return PushResponse(
         agent_id=agent_id,
-        build_id="",
-        image="",
-        status=BuildStatus.failed,
-        error="scaffold — push pipeline not yet implemented",
+        build_id=ctx.build_id or "",
+        image=ctx.image or "",
+        status=BuildStatus.succeeded,
+        url=ctx.lb_url,
     )
