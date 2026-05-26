@@ -54,3 +54,64 @@ def bs_name(agent_id: str, env: str) -> str:
 
 def path_matcher_name(agent_id: str, env: str) -> str:
     return f"agent-{safe_agent_id(agent_id)}-{env}-pm"
+
+
+# ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+class LBError(RuntimeError):
+    """Any failure interacting with the LB. Carries GCP error context."""
+
+    def __init__(self, message: str, *, operation: str | None = None,
+                 cause: Exception | None = None) -> None:
+        super().__init__(message)
+        self.operation = operation
+        self.cause = cause
+
+
+# ---------------------------------------------------------------------------
+# LBManager
+# ---------------------------------------------------------------------------
+
+import asyncio
+import logging
+from typing import TYPE_CHECKING
+
+import httpx
+
+if TYPE_CHECKING:
+    from dooers_push.settings import Settings
+
+logger = logging.getLogger(__name__)
+
+
+class LBManager:
+    """Per-agent LB registration. Idempotent on every call."""
+
+    def __init__(self, settings: "Settings") -> None:
+        self.project_id = settings.gcp_project_id
+        self.region = settings.lb_region
+        self.url_map_name = settings.lb_url_map
+        self.domain = settings.lb_domain
+
+    async def register_agent(self, agent_id: str, env: str) -> str:
+        """Wire {agent_id}-{env} Cloud Run into the LB; return the URL.
+
+        Steps (each idempotent):
+        1. Ensure Serverless NEG exists.
+        2. Ensure Backend Service exists; attach NEG.
+        3. Update URL Map to include host rule + path matcher.
+        4. Return the full HTTPS URL.
+
+        Raises LBError on any GCP failure.
+        """
+        raise NotImplementedError("filled in Task L.7")
+
+    async def unregister_agent(self, agent_id: str, env: str) -> None:
+        """Reverse of register_agent. Used on agent delete."""
+        raise NotImplementedError("filled in Task L.9")
+
+    async def wait_until_reachable(self, url: str, timeout_s: int = 90) -> None:
+        """Poll the URL until it returns a non-default response."""
+        raise NotImplementedError("filled in Task L.8")
