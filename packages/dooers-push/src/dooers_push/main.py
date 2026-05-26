@@ -4,7 +4,10 @@ import logging
 import uuid
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from dooers_protocol.errors import ErrorCode, ErrorEnvelope
 from dooers_protocol.push import BuildStatus, PushResponse
 from dooers_push import storage
 from dooers_push.auth import verify_session
@@ -25,6 +28,35 @@ app = FastAPI(
     version="0.1.0",
     description="Owns the push pipeline backing `dooers push`.",
 )
+
+
+# Validate required env vars at startup so misconfiguration fails fast,
+# not per-request.
+@app.on_event("startup")
+async def _validate_env() -> None:
+    Settings.from_env()  # raises RuntimeError if any required var missing
+
+
+def _error_code_for_status(status_code: int) -> ErrorCode:
+    return {
+        401: ErrorCode.unauthenticated,
+        403: ErrorCode.forbidden,
+        404: ErrorCode.not_found,
+        413: ErrorCode.archive_too_large,
+        503: ErrorCode.core_unreachable,
+    }.get(status_code, ErrorCode.internal)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _envelope_http_exception(request, exc: StarletteHTTPException) -> JSONResponse:
+    if not request.url.path.startswith("/v1/"):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    envelope = ErrorEnvelope(
+        error_code=_error_code_for_status(exc.status_code),
+        message=str(exc.detail),
+        correlation_id=str(uuid.uuid4()),
+    )
+    return JSONResponse(envelope.model_dump(mode="json"), status_code=exc.status_code)
 
 
 @app.get("/health")

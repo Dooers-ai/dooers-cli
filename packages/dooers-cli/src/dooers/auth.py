@@ -12,7 +12,8 @@ app = typer.Typer(no_args_is_help=True)
 def _settings(ctx: typer.Context) -> Settings:
     s = ctx.obj
     if not isinstance(s, Settings):
-        raise typer.Exit("internal: settings not resolved")
+        typer.echo("internal: settings not resolved", err=True)
+        raise typer.Exit(code=1)
     return s
 
 

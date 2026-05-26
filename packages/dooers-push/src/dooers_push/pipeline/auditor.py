@@ -29,7 +29,7 @@ _ROUTE_RE = re.compile(
 )
 
 
-def _read_text_member(data: bytes, name: str) -> str:
+def _read_text_member(data: bytes) -> str:
     try:
         return data.decode("utf-8", errors="replace")
     except Exception:  # noqa: BLE001
@@ -54,7 +54,7 @@ def _scan_archive_bytes(blob_bytes: bytes, archive_name: str) -> tuple[set[str],
             for info in zf.infolist():
                 if not info.filename.endswith(".py"):
                     continue
-                text = _read_text_member(zf.read(info), info.filename)
+                text = _read_text_member(zf.read(info))
                 imp, eps = _scan_text(text)
                 imports |= imp
                 endpoints.extend(eps)
@@ -66,7 +66,7 @@ def _scan_archive_bytes(blob_bytes: bytes, archive_name: str) -> tuple[set[str],
                 f = tar.extractfile(member)
                 if not f:
                     continue
-                text = _read_text_member(f.read(), member.name)
+                text = _read_text_member(f.read())
                 imp, eps = _scan_text(text)
                 imports |= imp
                 endpoints.extend(eps)
@@ -83,8 +83,13 @@ class AuditorStep(PipelineStep):
             return StepResult(status=BuildStatus.queued)
         _, rest = ctx.gcs_uri.split("gs://", 1)
         bucket, object_path = rest.split("/", 1)
-        client = storage.Client()
-        blob_bytes = client.bucket(bucket).blob(object_path).download_as_bytes()
+        try:
+            client = storage.Client()
+            blob_bytes = client.bucket(bucket).blob(object_path).download_as_bytes()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("auditor: failed to download archive from %s: %s", ctx.gcs_uri, e)
+            ctx.audit_report = AuditReport(passed=True)
+            return StepResult(status=BuildStatus.queued)
 
         try:
             imports, endpoints = _scan_archive_bytes(blob_bytes, ctx.gcs_uri)
@@ -96,6 +101,10 @@ class AuditorStep(PipelineStep):
             AuditFinding(severity="info", category="endpoint", message=f"detected endpoint: {ep}")
             for ep in sorted(set(endpoints))
         ]
+        findings.extend(
+            AuditFinding(severity="info", category="import", message=f"detected import: {imp}")
+            for imp in sorted(imports)
+        )
         ctx.audit_report = AuditReport(
             passed=True,
             findings=findings,
