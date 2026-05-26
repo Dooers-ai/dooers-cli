@@ -70,3 +70,71 @@ class FileShimAgentStore:
             if r.agent_id == agent_id and r.owner_user_id == self.owner_user_id:
                 return r
         raise KeyError(agent_id)
+
+
+# ---- HTTP-backed implementation (used when core's endpoints are ready) ----
+
+import httpx  # noqa: E402
+
+from dooers.core_client import CoreClientError  # noqa: E402
+
+
+class HTTPCoreAgentStore:
+    """Talks to core's /api/v1/agents endpoints.
+
+    Implements the same interface as FileShimAgentStore. Switch is one
+    line in agents.py — `_resolve_store()` picks based on env var.
+    """
+
+    def __init__(self, base_url: str, token: str, timeout: float = 10.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.token = token
+        self._timeout = timeout
+
+    def _cookies(self) -> dict[str, str]:
+        return {"auth": self.token}
+
+    def list(self) -> list[AgentRecord]:
+        try:
+            r = httpx.get(
+                f"{self.base_url}/api/v1/agents",
+                cookies=self._cookies(),
+                timeout=self._timeout,
+            )
+            r.raise_for_status()
+            body = r.json()
+            items = body.get("output", body) if isinstance(body, dict) else body
+            return [AgentRecord.model_validate(item) for item in items]
+        except httpx.HTTPError as e:
+            raise CoreClientError(f"list_agents failed: {e}") from e
+
+    def create(self, req: CreateAgentRequest) -> AgentRecord:
+        try:
+            r = httpx.post(
+                f"{self.base_url}/api/v1/agents",
+                cookies=self._cookies(),
+                json=req.model_dump(),
+                timeout=self._timeout,
+            )
+            r.raise_for_status()
+            body = r.json()
+            data = body.get("output", body)
+            return AgentRecord.model_validate(data)
+        except httpx.HTTPError as e:
+            raise CoreClientError(f"create_agent failed: {e}") from e
+
+    def get(self, agent_id: str) -> AgentRecord:
+        try:
+            r = httpx.get(
+                f"{self.base_url}/api/v1/agents/{agent_id}",
+                cookies=self._cookies(),
+                timeout=self._timeout,
+            )
+            if r.status_code == 404:
+                raise KeyError(agent_id)
+            r.raise_for_status()
+            body = r.json()
+            data = body.get("output", body)
+            return AgentRecord.model_validate(data)
+        except httpx.HTTPError as e:
+            raise CoreClientError(f"get_agent failed: {e}") from e
