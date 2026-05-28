@@ -2,11 +2,11 @@
 
 **Audience:** Dooers DevOps / platform team
 **Status:** Ready to execute
-**Estimated time:** ~45 min in the console + 30–60 min waiting for SSL cert to provision
+**Estimated time:** ~45 min in the console + 15–60 min waiting for SSL cert to provision
 
-This document describes the **one-time** GCP setup required before the `dooers-push` Cloud Run service can wire newly deployed agents into the global Dooers load balancer. After this setup completes, every `dooers push` will result in the deployed agent being reachable at a stable URL like `https://ag-7q4r-dev.agents.dooers.ai`.
+This document describes the **one-time** GCP setup required before the `dooers-push` Cloud Run service can wire newly deployed agents into the global Dooers load balancer. After this setup completes, every `dooers push` will result in the deployed agent being reachable at a stable URL like `https://agents.dooers.ai/ag-7q4r-dev`.
 
-The application code (`dooers-push`) handles the **per-push** LB updates (Serverless NEG creation, Backend Service, host rules). This document covers only the durable platform resources that exist once.
+The application code (`dooers-push`) handles the **per-push** LB updates (Serverless NEG creation, Backend Service, per-agent path rule). This document covers only the durable platform resources that exist once.
 
 ---
 
@@ -14,16 +14,17 @@ The application code (`dooers-push`) handles the **per-push** LB updates (Server
 
 ```
 Internet
-   │  HTTPS → ag-7q4r-dev.agents.dooers.ai
+   │  HTTPS → agents.dooers.ai/{agent-id}
    ▼
 [ Global Anycast IPv4 (static) ]
    ▼
 [ Forwarding Rule :443 ]
    ▼
-[ Target HTTPS Proxy ]      ──── SSL cert: *.agents.dooers.ai (Google-managed)
+[ Target HTTPS Proxy ]      ──── SSL cert: agents.dooers.ai (single-domain, Google-managed)
    ▼
 [ URL Map: dooers-agents-url-map ]
-   │   host rules added per push by dooers-push
+   │   host: agents.dooers.ai → path matcher: agents-pm
+   │   path rules added per push by dooers-push (with prefix rewrite → /)
    │   default → 404 placeholder
    ▼
 [ Backend Service per agent ] ── created per push
@@ -33,17 +34,18 @@ Internet
 [ Cloud Run service: {agent_id}-{env} ]
 ```
 
-Five resources are created in this one-time setup (steps below):
+Six resources are created in this one-time setup (steps below):
 
 1. Global static IPv4
-2. Google-managed wildcard SSL certificate (`*.agents.dooers.ai`)
-3. URL Map with default-404 backend
-4. Target HTTPS Proxy
-5. Global Forwarding Rule
+2. Google-managed single-domain SSL certificate (`agents.dooers.ai`)
+3. Placeholder 404 default backend (Cloud Run + NEG + Backend Service)
+4. URL Map with default-404 backend **and** a named `agents-pm` path matcher
+5. Target HTTPS Proxy
+6. Global Forwarding Rule
 
 Plus:
 - One IAM grant on the `dooers-push` service account
-- One DNS wildcard A record
+- One DNS A record (`agents.dooers.ai`)
 
 ---
 
@@ -99,23 +101,23 @@ gcloud compute addresses describe dooers-agents-lb-ip \
 
 ---
 
-## Step 3 — Create the wildcard SSL certificate
+## Step 3 — Create the single-domain SSL certificate
 
-We use a classic compute SSL certificate (matches the classic Global External HTTPS LB used below).
+We use a Google-managed classic compute SSL certificate scoped to the single host `agents.dooers.ai`. This is simpler than a wildcard cert — no DNS-01 authorization is needed. The cert provisions automatically once DNS resolves to the LB IP and the LB is serving on port 443 (Step 7 triggers this).
 
 **Console:**
 - Network security → Certificate Manager → **Classic certificates** tab → **Add certificate**
-- Name: `dooers-agents-wildcard-cert`
+- Name: `dooers-agents-cert`
 - Creation mode: **Create Google-managed certificate**
-- Domains: `*.agents.dooers.ai`
+- Domains: `agents.dooers.ai`
 - Click **Create**.
 
-The certificate's status will start at **PROVISIONING**. It will not become **ACTIVE** until Step 7 (DNS) is complete. That's normal. After DNS lands, provisioning takes 30–60 min to several hours.
+The certificate's status will start at **PROVISIONING**. It will not become **ACTIVE** until Step 7 (DNS) is complete. That's normal. After DNS lands, provisioning typically takes 15–60 min.
 
 **gcloud:**
 ```bash
-gcloud compute ssl-certificates create dooers-agents-wildcard-cert \
-  --domains="*.agents.dooers.ai" \
+gcloud compute ssl-certificates create dooers-agents-cert \
+  --domains=agents.dooers.ai \
   --global \
   --project=<PROJECT_ID>
 ```
@@ -124,7 +126,7 @@ gcloud compute ssl-certificates create dooers-agents-wildcard-cert \
 
 ## Step 4 — Create the placeholder default-404 backend
 
-The URL Map requires a default backend service for unmatched hosts. We deploy a tiny placeholder Cloud Run service (which will respond to anyone hitting an unknown agent URL), then wrap it in a NEG and Backend Service.
+The URL Map requires a default backend service for unmatched paths. We deploy a tiny placeholder Cloud Run service, then wrap it in a NEG and Backend Service.
 
 **Console:**
 
@@ -183,21 +185,34 @@ gcloud compute backend-services add-backend dooers-agents-default-404-bs \
 
 ---
 
-## Step 5 — Create the URL Map
+## Step 5 — Create the URL Map with the shared `agents-pm` path matcher
+
+This step differs from the old subdomain setup. Instead of leaving the URL Map empty and letting `dooers-push` add a host rule per agent, we create the URL Map **and** immediately add the single shared path matcher `agents-pm` that `dooers-push` will append per-agent path rules to.
 
 **Console:**
 - Network services → Load balancing → **URL maps** → **Create URL map**
 - Name: `dooers-agents-url-map`
 - Default backend service: `dooers-agents-default-404-bs` (from Step 4c)
-- Leave host rules empty for now — `dooers-push` populates them per push.
+- Add a host rule: host `agents.dooers.ai` → path matcher name `agents-pm`, default service `dooers-agents-default-404-bs`
 - Click **Create**.
 
 **gcloud:**
 ```bash
+# Create the URL Map with the 404 default
 gcloud compute url-maps create dooers-agents-url-map \
   --default-service=dooers-agents-default-404-bs \
   --project=<PROJECT_ID>
+
+# Add the host rule for agents.dooers.ai pointing at the shared path matcher "agents-pm".
+# dooers-push appends per-agent path rules to this matcher on every push.
+gcloud compute url-maps add-path-matcher dooers-agents-url-map \
+  --path-matcher-name=agents-pm \
+  --default-service=dooers-agents-default-404-bs \
+  --new-hosts=agents.dooers.ai \
+  --project=<PROJECT_ID>
 ```
+
+After this, the URL Map has: host `agents.dooers.ai` → path matcher `agents-pm` (empty path rules, 404 default). `dooers-push` fills in path rules on each push. It does **not** add a new host rule per agent — that was the old subdomain approach.
 
 ---
 
@@ -210,7 +225,7 @@ These two bind the URL Map to the SSL cert and the static IP.
 - Name: `dooers-agents-https-proxy`
 - Type: **Target HTTPS Proxy**
 - URL map: `dooers-agents-url-map`
-- SSL certificate: `dooers-agents-wildcard-cert`
+- SSL certificate: `dooers-agents-cert`
 - Click **Create**.
 
 **Console (Forwarding Rule):**
@@ -227,7 +242,7 @@ These two bind the URL Map to the SSL cert and the static IP.
 ```bash
 gcloud compute target-https-proxies create dooers-agents-https-proxy \
   --url-map=dooers-agents-url-map \
-  --ssl-certificates=dooers-agents-wildcard-cert \
+  --ssl-certificates=dooers-agents-cert \
   --project=<PROJECT_ID>
 
 gcloud compute forwarding-rules create dooers-agents-https-rule \
@@ -240,11 +255,13 @@ gcloud compute forwarding-rules create dooers-agents-https-rule \
 
 ---
 
-## Step 7 — DNS wildcard A record
+## Step 7 — DNS: single A record
+
+Create one A record for `agents.dooers.ai` pointing at the static IP reserved in Step 2. No wildcard is needed.
 
 **Console (Cloud DNS):**
 - Network services → Cloud DNS → click your `dooers.ai` zone → **Add Record Set**
-- DNS name: `*.agents` (Cloud DNS will append `.dooers.ai.`)
+- DNS name: `agents` (Cloud DNS will append `.dooers.ai.`)
 - Resource record type: **A**
 - TTL: **300** seconds
 - IPv4 address: paste the IP reserved in Step 2 (e.g. `34.120.55.88`)
@@ -252,20 +269,20 @@ gcloud compute forwarding-rules create dooers-agents-https-rule \
 
 **gcloud (Cloud DNS):**
 ```bash
-# Replace 34.120.55.88 with your actual reserved IP
-gcloud dns record-sets create '*.agents.dooers.ai.' \
+# Replace 34.120.x.x with your actual reserved IP
+gcloud dns record-sets create agents.dooers.ai. \
   --zone=dooers-ai \
   --type=A \
   --ttl=300 \
-  --rrdatas=34.120.55.88 \
+  --rrdatas=34.120.x.x \
   --project=<PROJECT_ID>
 ```
 
-**If DNS is elsewhere (Cloudflare, Route53, etc.):** create an `A` record for `*.agents.dooers.ai` pointing to the static IP. TTL ~300s.
+**If DNS is elsewhere (Cloudflare, Route53, etc.):** create an `A` record for `agents.dooers.ai` pointing to the static IP. TTL ~300s.
 
 Verify within ~5 min:
 ```bash
-dig +short ag-any.agents.dooers.ai
+dig +short agents.dooers.ai
 # Should output your static IP
 ```
 
@@ -273,7 +290,7 @@ dig +short ag-any.agents.dooers.ai
 
 ## Step 8 — Grant LB permissions to `dooers-push`'s service account
 
-`dooers-push` runs on Cloud Run under `agent-deploy-service@<PROJECT_ID>.iam.gserviceaccount.com`. It needs to create NEGs, Backend Services, and update the URL Map.
+`dooers-push` runs on Cloud Run under `agent-deploy-service@<PROJECT_ID>.iam.gserviceaccount.com`. It needs to create NEGs, Backend Services, and update path rules in the URL Map.
 
 **Console:**
 - IAM & Admin → IAM → find `agent-deploy-service@<PROJECT_ID>.iam.gserviceaccount.com` → **Edit**
@@ -293,11 +310,11 @@ gcloud projects add-iam-policy-binding <PROJECT_ID> \
 
 ## Step 9 — Wait for the SSL cert to become ACTIVE
 
-This is the longest single step. After DNS (Step 7) is complete, Google's cert provisioning checks the domain ownership by HTTP-01 challenge through the LB. It typically takes **30–60 min**, sometimes a few hours, occasionally up to 24 hours.
+After DNS (Step 7) resolves to the LB IP and the LB is serving on port 443, Google provisions the single-domain cert automatically via the load balancer. This typically takes **15–60 min**. (Single-domain certs are faster to provision than wildcard certs — no DNS-01 challenge step.)
 
 Check status:
 ```bash
-gcloud compute ssl-certificates describe dooers-agents-wildcard-cert \
+gcloud compute ssl-certificates describe dooers-agents-cert \
   --global --project=<PROJECT_ID> --format='value(managed.status)'
 ```
 
@@ -310,36 +327,43 @@ Status progression: `PROVISIONING` → `ACTIVE`. Do not declare the setup comple
 Once the cert is `ACTIVE`:
 
 ```bash
-# 1. Verify wildcard DNS
-dig +short ag-test.agents.dooers.ai
+# 1. Verify DNS
+dig +short agents.dooers.ai
 # → your static IP
 
-# 2. Verify HTTPS handshake
-curl -sI https://ag-test.agents.dooers.ai
-# → HTTP/2 404 (or 200 from the placeholder; depends on Step 4a service)
-# The critical part is the HTTPS handshake succeeding (no cert errors).
+# 2. Verify HTTPS handshake (before any agent push — hits the 404 default)
+curl -sI https://agents.dooers.ai/anything
+# → HTTP/2 with a valid cert; 404-ish body from the placeholder service.
 
-# 3. Verify LB resources exist
-gcloud compute url-maps describe dooers-agents-url-map --project=<PROJECT_ID>
-gcloud compute backend-services list --global --project=<PROJECT_ID>
-gcloud compute network-endpoint-groups list --project=<PROJECT_ID>
+# 3. After a `dooers push`, inspect the URL Map to confirm the path rule was added:
+gcloud compute url-maps describe dooers-agents-url-map \
+  --format="yaml(pathMatchers)" --project=<PROJECT_ID>
+# → you should see a path rule for /ag-xxx and /ag-xxx/* under agents-pm
+
+# 4. Hit the agent through the LB (prefix is stripped before reaching Cloud Run):
+curl https://agents.dooers.ai/ag-xxxx-dev/
+# → the agent's "/" response
 ```
 
-If all three return without errors and `curl` shows a valid HTTPS handshake (no SSL warnings), the setup is complete and `dooers-push` can start adding per-agent backends.
+If step 2 returns a valid HTTPS handshake (no SSL warnings) and step 4 returns the agent's root response, the setup is complete.
 
 ---
 
 ## Troubleshooting
 
-**Cert stuck in PROVISIONING for >24 hours**
+**Cert stuck in PROVISIONING for >60 min**
 
-- Confirm DNS A record actually resolves to your static IP: `dig +short ag-test.agents.dooers.ai`
+- Confirm DNS A record resolves to your static IP: `dig +short agents.dooers.ai`
 - Confirm the Forwarding Rule is using the static IP: `gcloud compute forwarding-rules describe dooers-agents-https-rule --global`
-- Cert provisioning fails if Google can't reach the LB IP for the HTTP-01 challenge. Make sure the LB is fully created and serving traffic on port 443 (`curl -k https://<static-ip>` should at least connect, even if it returns a cert mismatch).
+- Cert provisioning requires the LB to be reachable on port 443. Verify with: `curl -k https://<static-ip>` (expect a connect, even if the cert doesn't match yet).
 
 **`curl` returns SSL error before cert is ACTIVE**
 
-- Expected. The default GCP cert (auto-attached temporarily) doesn't match `*.agents.dooers.ai`. Wait for the managed cert.
+- Expected. The default GCP cert (auto-attached temporarily) doesn't match `agents.dooers.ai`. Wait for the managed cert to reach `ACTIVE`.
+
+**`dooers-push` fails with "path matcher agents-pm missing"**
+
+- Step 5's `add-path-matcher` command was not run, or the URL Map was recreated without it. Re-run the `gcloud compute url-maps add-path-matcher` command from Step 5.
 
 **`dooers-push` fails to create a NEG with permission error**
 
@@ -361,7 +385,7 @@ gcloud compute url-maps delete dooers-agents-url-map --project=<PROJECT_ID> --qu
 gcloud compute backend-services delete dooers-agents-default-404-bs --global --project=<PROJECT_ID> --quiet
 gcloud compute network-endpoint-groups delete dooers-agents-default-neg --region=us-central1 --project=<PROJECT_ID> --quiet
 gcloud run services delete dooers-agents-default-404 --region=us-central1 --project=<PROJECT_ID> --quiet
-gcloud compute ssl-certificates delete dooers-agents-wildcard-cert --global --project=<PROJECT_ID> --quiet
+gcloud compute ssl-certificates delete dooers-agents-cert --global --project=<PROJECT_ID> --quiet
 gcloud compute addresses delete dooers-agents-lb-ip --global --project=<PROJECT_ID> --quiet
 # DNS record left as exercise — clean up manually in Cloud DNS console.
 ```
@@ -372,35 +396,52 @@ gcloud compute addresses delete dooers-agents-lb-ip --global --project=<PROJECT_
 
 For reference only — no manual work needed once the platform resources above exist:
 
-1. Create a Serverless NEG `agent-{agent_id}-{env}-neg` pointing to the new Cloud Run service `{agent_id}-{env}`.
-2. Create a Backend Service `agent-{agent_id}-{env}-bs` wrapping that NEG.
-3. `PATCH` the URL Map `dooers-agents-url-map` to add a host rule `{agent_id_safe}-{env}.agents.dooers.ai` → that Backend Service.
-4. Poll the new URL until it returns a non-default response (30-60s typical).
-5. Return the URL to the CLI.
+1. Create a Serverless NEG `agent-{safe}-{env}-neg` pointing to the new Cloud Run service `{agent_id}-{env}`.
+2. Create a Backend Service `agent-{safe}-{env}-bs` wrapping that NEG.
+3. `PATCH` the URL Map `dooers-agents-url-map` to append (or replace) a **path rule** `/{safe}` + `/{safe}/*` in the shared `agents-pm` path matcher, with a `pathPrefixRewrite="/"` so the backend (Cloud Run) receives the path with the agent prefix stripped.
+4. Poll the new URL until it returns a non-default response (30–60s typical).
+5. Return the URL `https://agents.dooers.ai/{safe}` to the CLI.
 
-Idempotency: re-pushing the same agent updates the existing NEG to point at the latest Cloud Run revision; it does NOT create duplicates.
+**Path-prefix rewrite detail:** a request for `agents.dooers.ai/ag-7q4r-dev/health` matches the path rule `/ag-7q4r-dev/*`; the LB rewrites the path to `/health` before forwarding to Cloud Run. The agent always serves from `/` and never sees the `/{safe}` prefix.
 
-Cleanup: when an agent is deleted (out of POC scope), `dooers-push` will remove the host rule, Backend Service, and NEG — in that order.
+Idempotency: re-pushing the same agent replaces the existing path rule in place; it does NOT create duplicates.
+
+Cleanup: when an agent is deleted (out of POC scope), `dooers-push` removes the path rule from `agents-pm`, then the Backend Service, then the NEG — in that order.
 
 ---
 
 ## Naming convention summary
 
-| Resource | Name pattern | Created |
+| Resource | Name pattern | Created by |
 |---|---|---|
-| Static IP | `dooers-agents-lb-ip` | Once (this doc) |
-| SSL certificate | `dooers-agents-wildcard-cert` | Once |
-| URL Map | `dooers-agents-url-map` | Once |
-| Target HTTPS Proxy | `dooers-agents-https-proxy` | Once |
-| Forwarding Rule | `dooers-agents-https-rule` | Once |
-| Default 404 Cloud Run | `dooers-agents-default-404` | Once |
-| Default 404 NEG | `dooers-agents-default-neg` | Once |
-| Default 404 Backend Service | `dooers-agents-default-404-bs` | Once |
-| Per-agent NEG | `agent-{agent_id_safe}-{env}-neg` | Per push (by `dooers-push`) |
-| Per-agent Backend Service | `agent-{agent_id_safe}-{env}-bs` | Per push (by `dooers-push`) |
-| Per-agent host rule | `{agent_id_safe}-{env}.agents.dooers.ai` | Per push (by `dooers-push`) |
+| Static IP | `dooers-agents-lb-ip` | DevOps, once (this doc) |
+| SSL certificate (single-domain) | `dooers-agents-cert` | DevOps, once |
+| URL Map | `dooers-agents-url-map` | DevOps, once |
+| Shared path matcher | `agents-pm` (inside URL Map) | DevOps, once (Step 5) |
+| Target HTTPS Proxy | `dooers-agents-https-proxy` | DevOps, once |
+| Forwarding Rule | `dooers-agents-https-rule` | DevOps, once |
+| Default 404 Cloud Run | `dooers-agents-default-404` | DevOps, once |
+| Default 404 NEG | `dooers-agents-default-neg` | DevOps, once |
+| Default 404 Backend Service | `dooers-agents-default-404-bs` | DevOps, once |
+| Per-agent NEG | `agent-{safe}-{env}-neg` | `dooers-push`, per push |
+| Per-agent Backend Service | `agent-{safe}-{env}-bs` | `dooers-push`, per push |
+| Per-agent path rule | `/{safe}` + `/{safe}/*` in `agents-pm` | `dooers-push`, per push |
 
-Where `agent_id_safe` = `agent_id.lower().replace('_', '-')`. Underscores are invalid in DNS hostnames.
+Where `{safe}` = `agent_id.lower().replace('_', '-')`. Underscores are invalid in URL path segments used as identifiers here. For non-prod environments the env suffix is appended: `{safe}-{env}` (e.g. `ag-7q4r-dev`).
+
+The code reads `DOOERS_LB_URL_MAP=dooers-agents-url-map` and expects the `agents-pm` path matcher to exist. If either name differs from the defaults, set the corresponding env var on `dooers-push` or rename the resource.
+
+---
+
+## Appendix: deprecated subdomain approach (v1)
+
+The original v1 setup used per-agent subdomains (`ag-7q4r-dev.agents.dooers.ai`) with:
+
+- A wildcard SSL certificate (`*.agents.dooers.ai`) — Google-managed wildcard certs require DNS-01 authorization, which adds extra setup steps and slower provisioning.
+- A wildcard DNS A record (`*.agents.dooers.ai`).
+- One URL Map **host rule** per agent (added by `dooers-push` on each push), each pointing at a dedicated per-agent path matcher.
+
+This approach is superseded by the path-based setup documented above. The single-domain cert, single A record, and shared `agents-pm` path matcher are strictly simpler. Do not follow this appendix for new deployments.
 
 ---
 
