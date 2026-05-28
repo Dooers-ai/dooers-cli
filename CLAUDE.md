@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Monorepo with three sibling packages under `packages/`:
 
-- `dooers-cli/` — published as `dooers` on PyPI. Typer-based CLI installed by agent creators (`pip install dooers`). Commands: `dooers auth login|logout|whoami`, `dooers agents list|create|show`, `dooers push`.
+- `dooers-cli/` — published as `dooers` on PyPI. Typer-based CLI installed by agent creators (`pip install dooers`). Commands: `dooers login`, `dooers logout`, `dooers whoami`, `dooers agents list|create|show`, `dooers push`.
 - `dooers-push/` — Cloud Run service that owns the push pipeline (auditor → provisioner → deployer). Not published to PyPI; deployed from source.
 - `dooers-protocol/` — published as `dooers-protocol` on PyPI. Shared Pydantic models defining the wire contract between any client and `dooers-push`. Both `dooers-cli` and `dooers-push` import from it.
 

@@ -9,10 +9,10 @@ pip install dooers
 ## Commands
 
 ```bash
-# auth
-dooers auth login --email you@example.com
-dooers auth whoami
-dooers auth logout
+# auth (email prompts if omitted)
+dooers login you@example.com
+dooers whoami
+dooers logout
 
 # agents
 dooers agents list

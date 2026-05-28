@@ -20,7 +20,7 @@ The harder open questions you raised — auditor maliciousness rules, managed DB
 
 ```bash
 # 1. Authenticate once (token saved to ~/.dooers/token)
-$ dooers auth login --email creator@example.com
+$ dooers login creator@example.com
 Requesting verification code…
 Verification code sent to your email.
 Enter the code: 482931
@@ -137,7 +137,7 @@ The CLI shows a spinner during steps 7–13; total wall time is dominated by Clo
 
 | Capability | POC | Deferred | Notes |
 |---|:-:|:-:|---|
-| CLI: `auth login / whoami / logout` | ✅ | | OTP-via-email flow; token at `~/.dooers/token` (0600) |
+| CLI: `login / whoami / logout` | ✅ | | OTP-via-email flow; token at `~/.dooers/token` (0600) |
 | CLI: `agents list / create / show` | ✅ | | Backed by FileShim until core's `/agents` endpoints exist; one-env-var switch when they do |
 | CLI: `push [<agentID>]` | ✅ | | Reads `dooers.yaml` if no agentID; `.dooersignore` ported from v1 |
 | Archive → GCS → Cloud Build → Cloud Run | ✅ | | Ported from v1; resources labelled with `agent_id` + `owner_user_id` + `env` |
