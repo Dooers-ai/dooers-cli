@@ -125,14 +125,14 @@ async def test_ensure_bs_is_noop_when_already_exists() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_url_map_appends_when_host_missing() -> None:
+async def test_upsert_path_rule_appends_when_missing() -> None:
     lb = LBManager(_settings())
 
-    # Mock the existing URL map (no rules for our host yet)
+    pm = MagicMock()
+    pm.name = "agents-pm"
+    pm.path_rules = []
     existing_url_map = MagicMock()
-    existing_url_map.host_rules = []
-    existing_url_map.path_matchers = []
-    existing_url_map.default_service = "default-bs"
+    existing_url_map.path_matchers = [pm]
 
     mock_client = MagicMock()
     mock_client.get.return_value = existing_url_map
@@ -144,42 +144,27 @@ async def test_update_url_map_appends_when_host_missing() -> None:
         "dooers_push.gcp.loadbalancer.compute_v1.UrlMapsClient",
         return_value=mock_client,
     ):
-        await lb._update_url_map(
-            "ag_7q4r", "dev",
-            host="ag-7q4r-dev.agents.dooers.ai",
-            bs_self_link="bs-url",
-        )
+        await lb._upsert_path_rule("ag-7q4r-dev", bs_self_link="bs-url")
 
     mock_client.patch.assert_called_once()
-    args, kwargs = mock_client.patch.call_args
-    patched = kwargs["url_map_resource"]
-    assert len(patched.host_rules) == 1
-    assert patched.host_rules[0].hosts == ["ag-7q4r-dev.agents.dooers.ai"]
-    assert patched.host_rules[0].path_matcher == "agent-ag-7q4r-dev-pm"
-    assert len(patched.path_matchers) == 1
-    assert patched.path_matchers[0].name == "agent-ag-7q4r-dev-pm"
-    assert patched.path_matchers[0].default_service == "bs-url"
+    assert len(pm.path_rules) == 1
+    rule = pm.path_rules[0]
+    assert rule.paths == ["/ag-7q4r-dev", "/ag-7q4r-dev/*"]
+    assert rule.service == "bs-url"
+    assert rule.route_action.url_rewrite.path_prefix_rewrite == "/"
 
 
 @pytest.mark.asyncio
-async def test_update_url_map_is_noop_when_host_already_routed() -> None:
-    from google.cloud import compute_v1 as compute_v1_real
+async def test_upsert_path_rule_is_idempotent() -> None:
+    from google.cloud import compute_v1 as c
 
     lb = LBManager(_settings())
-
-    # Pre-existing host rule + path matcher for the same agent.
-    existing_host_rule = compute_v1_real.HostRule(
-        hosts=["ag-7q4r-dev.agents.dooers.ai"],
-        path_matcher="agent-ag-7q4r-dev-pm",
-    )
-    existing_pm = compute_v1_real.PathMatcher(
-        name="agent-ag-7q4r-dev-pm",
-        default_service="bs-url",
-    )
-
+    existing_rule = c.PathRule(paths=["/ag-7q4r-dev", "/ag-7q4r-dev/*"], service="old-bs")
+    pm = MagicMock()
+    pm.name = "agents-pm"
+    pm.path_rules = [existing_rule]
     existing_url_map = MagicMock()
-    existing_url_map.host_rules = [existing_host_rule]
-    existing_url_map.path_matchers = [existing_pm]
+    existing_url_map.path_matchers = [pm]
 
     mock_client = MagicMock()
     mock_client.get.return_value = existing_url_map
@@ -191,68 +176,50 @@ async def test_update_url_map_is_noop_when_host_already_routed() -> None:
         "dooers_push.gcp.loadbalancer.compute_v1.UrlMapsClient",
         return_value=mock_client,
     ):
-        await lb._update_url_map(
-            "ag_7q4r", "dev",
-            host="ag-7q4r-dev.agents.dooers.ai",
-            bs_self_link="bs-url",
-        )
+        await lb._upsert_path_rule("ag-7q4r-dev", bs_self_link="new-bs")
 
-    # Patch may still be called (with same content) — idempotent.
-    # Key assertion: nothing duplicated.
-    if mock_client.patch.called:
-        patched = mock_client.patch.call_args.kwargs["url_map_resource"]
-        host_strings = [h for hr in patched.host_rules for h in hr.hosts]
-        assert host_strings.count("ag-7q4r-dev.agents.dooers.ai") == 1
+    # Still exactly one rule for this segment (replaced, not duplicated).
+    matching = [r for r in pm.path_rules if "/ag-7q4r-dev" in r.paths]
+    assert len(matching) == 1
+    assert matching[0].service == "new-bs"
 
 
 @pytest.mark.asyncio
-async def test_update_url_map_raises_lberror_when_map_not_found() -> None:
+async def test_upsert_path_rule_raises_when_url_map_missing() -> None:
     lb = LBManager(_settings())
     mock_client = MagicMock()
-    mock_client.get.side_effect = gcp_exceptions.NotFound("url map not found")
-
+    mock_client.get.side_effect = gcp_exceptions.NotFound("no url map")
     with patch(
         "dooers_push.gcp.loadbalancer.compute_v1.UrlMapsClient",
         return_value=mock_client,
     ):
-        with pytest.raises(LBError) as exc_info:
-            await lb._update_url_map(
-                "ag_7q4r", "dev",
-                host="ag-7q4r-dev.agents.dooers.ai",
-                bs_self_link="bs-url",
-            )
-        assert "not found" in str(exc_info.value).lower()
+        with pytest.raises(LBError):
+            await lb._upsert_path_rule("ag-7q4r-dev", bs_self_link="bs-url")
 
 
 @pytest.mark.asyncio
-async def test_register_agent_orchestrates_calls_and_returns_url() -> None:
+async def test_register_agent_returns_path_url_dev() -> None:
     lb = LBManager(_settings())
-
-    with (
-        patch.object(lb, "_ensure_neg", return_value="neg-url") as m_neg,
-        patch.object(lb, "_ensure_backend_service", return_value="bs-url") as m_bs,
-        patch.object(lb, "_update_url_map", return_value=None) as m_url_map,
-    ):
-        url = await lb.register_agent("ag_7q4r", "dev")
-
-    m_neg.assert_called_once_with("ag_7q4r", "dev")
-    m_bs.assert_called_once_with("ag_7q4r", "dev", "neg-url")
-    m_url_map.assert_called_once()
-    assert url == "https://ag-7q4r-dev.agents.dooers.ai"
-
-
-@pytest.mark.asyncio
-async def test_register_agent_prod_drops_env_suffix_in_url() -> None:
-    lb = LBManager(_settings())
-
     with (
         patch.object(lb, "_ensure_neg", return_value="neg-url"),
         patch.object(lb, "_ensure_backend_service", return_value="bs-url"),
-        patch.object(lb, "_update_url_map", return_value=None),
+        patch.object(lb, "_upsert_path_rule", return_value=None) as m_upsert,
+    ):
+        url = await lb.register_agent("ag_7q4r", "dev")
+    m_upsert.assert_called_once()
+    assert url == "https://agents.dooers.ai/ag-7q4r-dev"
+
+
+@pytest.mark.asyncio
+async def test_register_agent_returns_path_url_prod() -> None:
+    lb = LBManager(_settings())
+    with (
+        patch.object(lb, "_ensure_neg", return_value="neg-url"),
+        patch.object(lb, "_ensure_backend_service", return_value="bs-url"),
+        patch.object(lb, "_upsert_path_rule", return_value=None),
     ):
         url = await lb.register_agent("ag_7q4r", "prod")
-
-    assert url == "https://ag-7q4r.agents.dooers.ai"
+    assert url == "https://agents.dooers.ai/ag-7q4r"
 
 
 @pytest.mark.asyncio
@@ -305,36 +272,30 @@ async def test_unregister_agent_removes_in_correct_order() -> None:
     lb = LBManager(_settings())
     calls: list[str] = []
 
-    async def _record_url_map(*args, **kwargs):
-        calls.append("url_map")
-
-    async def _record_bs(*args, **kwargs):
-        calls.append("bs")
-
-    async def _record_neg(*args, **kwargs):
-        calls.append("neg")
+    async def _rec_path(*a, **k): calls.append("path")
+    async def _rec_bs(*a, **k): calls.append("bs")
+    async def _rec_neg(*a, **k): calls.append("neg")
 
     with (
-        patch.object(lb, "_remove_url_map_host_rule", side_effect=_record_url_map),
-        patch.object(lb, "_delete_backend_service", side_effect=_record_bs),
-        patch.object(lb, "_delete_neg", side_effect=_record_neg),
+        patch.object(lb, "_remove_path_rule", side_effect=_rec_path),
+        patch.object(lb, "_delete_backend_service", side_effect=_rec_bs),
+        patch.object(lb, "_delete_neg", side_effect=_rec_neg),
     ):
         await lb.unregister_agent("ag_7q4r", "dev")
 
-    assert calls == ["url_map", "bs", "neg"]
+    assert calls == ["path", "bs", "neg"]
 
 
 @pytest.mark.asyncio
-async def test_unregister_agent_ignores_missing_resources() -> None:
+async def test_unregister_agent_ignores_missing() -> None:
     lb = LBManager(_settings())
 
-    async def _raise_not_found(*args, **kwargs):
+    async def _raise(*a, **k):
         raise gcp_exceptions.NotFound("gone")
 
     with (
-        patch.object(lb, "_remove_url_map_host_rule", side_effect=_raise_not_found),
-        patch.object(lb, "_delete_backend_service", side_effect=_raise_not_found),
-        patch.object(lb, "_delete_neg", side_effect=_raise_not_found),
+        patch.object(lb, "_remove_path_rule", side_effect=_raise),
+        patch.object(lb, "_delete_backend_service", side_effect=_raise),
+        patch.object(lb, "_delete_neg", side_effect=_raise),
     ):
-        # Should not raise — delete is idempotent.
-        await lb.unregister_agent("ag_7q4r", "dev")
+        await lb.unregister_agent("ag_7q4r", "dev")  # no raise

@@ -1,7 +1,7 @@
 """LBManager + naming helpers + LBError.
 
 Owns per-agent Load Balancer registration (Serverless NEG + Backend
-Service + URL Map host rule).
+Service + URL Map path rule).
 
 All operations are idempotent: re-registering the same agent updates
 the existing NEG to point at the latest Cloud Run revision; it does
@@ -9,6 +9,8 @@ not create duplicates.
 """
 
 from __future__ import annotations
+
+SHARED_PATH_MATCHER = "agents-pm"
 
 
 # ---------------------------------------------------------------------------
@@ -28,19 +30,15 @@ def safe_agent_id(agent_id: str) -> str:
     return agent_id.lower().replace("_", "-")
 
 
-def host_for(agent_id: str, env: str, lb_domain: str) -> str:
-    """Return the per-agent LB hostname.
+def path_segment_for(agent_id: str, env: str) -> str:
+    """Return the per-agent path segment (no leading slash).
 
     Prod drops the env suffix; non-prod keeps it.
-    host_for('ag_7q4r', 'prod', 'agents.dooers.ai')
-    → 'ag-7q4r.agents.dooers.ai'
-    host_for('ag_7q4r', 'dev', 'agents.dooers.ai')
-    → 'ag-7q4r-dev.agents.dooers.ai'
+    path_segment_for('ag_7q4r', 'prod') -> 'ag-7q4r'
+    path_segment_for('ag_7q4r', 'dev')  -> 'ag-7q4r-dev'
     """
     safe = safe_agent_id(agent_id)
-    if env == "prod":
-        return f"{safe}.{lb_domain}"
-    return f"{safe}-{env}.{lb_domain}"
+    return safe if env == "prod" else f"{safe}-{env}"
 
 
 def neg_name(agent_id: str, env: str) -> str:
@@ -50,10 +48,6 @@ def neg_name(agent_id: str, env: str) -> str:
 
 def bs_name(agent_id: str, env: str) -> str:
     return f"agent-{safe_agent_id(agent_id)}-{env}-bs"
-
-
-def path_matcher_name(agent_id: str, env: str) -> str:
-    return f"agent-{safe_agent_id(agent_id)}-{env}-pm"
 
 
 # ---------------------------------------------------------------------------
@@ -98,44 +92,102 @@ class LBManager:
         self.domain = settings.lb_domain
 
     async def register_agent(self, agent_id: str, env: str) -> str:
-        """Wire {agent_id}-{env} Cloud Run into the LB; return the URL."""
-        host = host_for(agent_id, env, self.domain)
-
+        """Wire {agent_id}-{env} Cloud Run into the LB; return the path URL."""
+        seg = path_segment_for(agent_id, env)
         neg_url = await self._ensure_neg(agent_id, env)
         bs_url = await self._ensure_backend_service(agent_id, env, neg_url)
-        await self._update_url_map(agent_id, env, host=host, bs_self_link=bs_url)
-
-        return f"https://{host}"
+        await self._upsert_path_rule(seg, bs_self_link=bs_url)
+        return f"https://{self.domain}/{seg}"
 
     async def unregister_agent(self, agent_id: str, env: str) -> None:
-        """Reverse of register_agent. Removes in order: URL Map rule, BS, NEG."""
-        host = host_for(agent_id, env, self.domain)
+        """Reverse of register_agent. Removes in order: path rule, BS, NEG."""
+        seg = path_segment_for(agent_id, env)
 
         for step_fn, op_name in (
-            (lambda: self._remove_url_map_host_rule(agent_id, env, host=host), "remove_url_map"),
+            (lambda: self._remove_path_rule(seg), "remove_path_rule"),
             (lambda: self._delete_backend_service(agent_id, env), "delete_bs"),
             (lambda: self._delete_neg(agent_id, env), "delete_neg"),
         ):
             try:
                 await step_fn()
             except gcp_exceptions.NotFound:
-                logger.info("lb_op=%s agent_id=%s env=%s already_gone",
-                            op_name, agent_id, env)
+                logger.info("lb_op=%s seg=%s already_gone", op_name, seg)
             except gcp_exceptions.GoogleAPIError as e:
                 raise LBError(f"unregister failed at {op_name}: {e}",
                               operation=op_name, cause=e) from e
 
-    async def _remove_url_map_host_rule(self, agent_id: str, env: str, *, host: str) -> None:
-        pm = path_matcher_name(agent_id, env)
+    async def _upsert_path_rule(self, seg: str, *, bs_self_link: str) -> None:
+        """Add or replace the path rule routing /{seg} (+ /{seg}/*) to the
+        agent's backend, stripping the /{seg} prefix before forwarding."""
+        client = compute_v1.UrlMapsClient()
+        loop = asyncio.get_running_loop()
+        paths = [f"/{seg}", f"/{seg}/*"]
+
+        def _get_and_patch() -> None:
+            try:
+                url_map = client.get(project=self.project_id, url_map=self.url_map_name)
+            except gcp_exceptions.NotFound as e:
+                raise LBError(
+                    f"URL map {self.url_map_name!r} not found — has devops completed setup?",
+                    operation="url_map_get", cause=e,
+                ) from e
+
+            pm = next(
+                (m for m in url_map.path_matchers if m.name == SHARED_PATH_MATCHER), None
+            )
+            if pm is None:
+                raise LBError(
+                    f"path matcher {SHARED_PATH_MATCHER!r} missing — re-run LB setup",
+                    operation="url_map_pm_missing",
+                )
+
+            new_rule = compute_v1.PathRule(
+                paths=paths,
+                service=bs_self_link,
+                route_action=compute_v1.HttpRouteAction(
+                    url_rewrite=compute_v1.UrlRewrite(path_prefix_rewrite="/")
+                ),
+            )
+            existing_idx = next(
+                (i for i, r in enumerate(pm.path_rules) if f"/{seg}" in r.paths), None
+            )
+            if existing_idx is not None:
+                pm.path_rules[existing_idx] = new_rule
+            else:
+                pm.path_rules.append(new_rule)
+
+            op = client.patch(
+                project=self.project_id, url_map=self.url_map_name, url_map_resource=url_map
+            )
+            op.result(timeout=120)
+
+        try:
+            await loop.run_in_executor(None, _get_and_patch)
+            logger.info("lb_op=upsert_path_rule seg=%s ok", seg)
+        except LBError:
+            raise
+        except gcp_exceptions.PermissionDenied as e:
+            raise LBError(f"permission denied patching URL Map: {e}",
+                          operation="url_map_patch", cause=e) from e
+        except gcp_exceptions.GoogleAPIError as e:
+            raise LBError(f"failed to patch URL Map: {e}",
+                          operation="url_map_patch", cause=e) from e
+
+    async def _remove_path_rule(self, seg: str) -> None:
         client = compute_v1.UrlMapsClient()
         loop = asyncio.get_running_loop()
 
         def _patch() -> None:
             url_map = client.get(project=self.project_id, url_map=self.url_map_name)
-            url_map.host_rules = [hr for hr in url_map.host_rules if host not in hr.hosts]
-            url_map.path_matchers = [m for m in url_map.path_matchers if m.name != pm]
-            op = client.patch(project=self.project_id, url_map=self.url_map_name,
-                              url_map_resource=url_map)
+            pm = next(
+                (m for m in url_map.path_matchers if m.name == SHARED_PATH_MATCHER), None
+            )
+            if pm is None:
+                return
+            pm.path_rules = [r for r in pm.path_rules if f"/{seg}" not in r.paths]
+            op = client.patch(
+                project=self.project_id, url_map=self.url_map_name, url_map_resource=url_map
+            )
             op.result(timeout=120)
 
         await loop.run_in_executor(None, _patch)
@@ -267,66 +319,3 @@ class LBManager:
             f"https://www.googleapis.com/compute/v1/projects/{self.project_id}"
             f"/global/backendServices/{name}"
         )
-
-    async def _update_url_map(self, agent_id: str, env: str, *,
-                              host: str, bs_self_link: str) -> None:
-        """Add or update the host rule + path matcher for this agent."""
-        pm = path_matcher_name(agent_id, env)
-        client = compute_v1.UrlMapsClient()
-        loop = asyncio.get_running_loop()
-
-        def _get_and_patch() -> None:
-            try:
-                url_map = client.get(project=self.project_id, url_map=self.url_map_name)
-            except gcp_exceptions.NotFound as e:
-                raise LBError(
-                    f"URL map {self.url_map_name!r} not found — has devops completed gcp-lb.md setup?",
-                    operation="url_map_get",
-                    cause=e,
-                ) from e
-
-            # Find existing rule for this host (if any)
-            existing_pm_idx = None
-            existing_hr_idx = None
-            for i, pm_obj in enumerate(url_map.path_matchers):
-                if pm_obj.name == pm:
-                    existing_pm_idx = i
-                    break
-            for i, hr in enumerate(url_map.host_rules):
-                if host in hr.hosts:
-                    existing_hr_idx = i
-                    break
-
-            # Build new path matcher
-            new_pm = compute_v1.PathMatcher(name=pm, default_service=bs_self_link)
-            if existing_pm_idx is not None:
-                url_map.path_matchers[existing_pm_idx] = new_pm
-            else:
-                url_map.path_matchers.append(new_pm)
-
-            # Build new host rule
-            new_hr = compute_v1.HostRule(hosts=[host], path_matcher=pm)
-            if existing_hr_idx is not None:
-                url_map.host_rules[existing_hr_idx] = new_hr
-            else:
-                url_map.host_rules.append(new_hr)
-
-            op = client.patch(
-                project=self.project_id,
-                url_map=self.url_map_name,
-                url_map_resource=url_map,
-            )
-            op.result(timeout=120)
-
-        try:
-            await loop.run_in_executor(None, _get_and_patch)
-            logger.info("lb_op=update_url_map agent_id=%s env=%s host=%s ok",
-                        agent_id, env, host)
-        except LBError:
-            raise
-        except gcp_exceptions.PermissionDenied as e:
-            raise LBError(f"permission denied patching URL Map: {e}",
-                          operation="url_map_patch", cause=e) from e
-        except gcp_exceptions.GoogleAPIError as e:
-            raise LBError(f"failed to patch URL Map: {e}",
-                          operation="url_map_patch", cause=e) from e
