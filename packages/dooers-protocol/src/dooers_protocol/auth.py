@@ -11,7 +11,7 @@ class AuthSession(BaseModel):
 
 
 class WhoamiResponse(BaseModel):
-    """Response shape for `dooers auth whoami`."""
+    """Response shape for `dooers whoami`."""
 
     user_id: str
     email: str
