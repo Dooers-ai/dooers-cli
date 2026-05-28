@@ -69,7 +69,7 @@ def push(
     # Auth.
     token = TokenStore().load()
     if not token or is_token_expired(token):
-        typer.echo("Not authenticated. Run `dooers auth login`.", err=True)
+        typer.echo("Not authenticated. Run `dooers login`.", err=True)
         raise typer.Exit(code=1)
 
     # Archive cwd.

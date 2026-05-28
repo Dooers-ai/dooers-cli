@@ -29,7 +29,7 @@ def _ensure_authenticated() -> tuple[str, str]:
     store = TokenStore()
     token = store.load()
     if not token or is_token_expired(token):
-        typer.echo("Not authenticated. Run `dooers auth login`.", err=True)
+        typer.echo("Not authenticated. Run `dooers login`.", err=True)
         raise typer.Exit(code=1)
     return token, ""  # user_id filled per-call below
 

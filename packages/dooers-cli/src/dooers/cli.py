@@ -1,4 +1,4 @@
-"""Top-level Typer app — mounts auth, agents, push subcommand groups."""
+"""Top-level Typer app — login/whoami/logout + agents group + push."""
 
 import typer
 
@@ -24,7 +24,9 @@ def _root(
     ctx.obj = Settings.resolve(core_url=core_url, push_url=push_url, env=env)
 
 
-app.add_typer(auth.app, name="auth", help="Authenticate with the Dooers core API.")
+app.command(name="login", help="Authenticate with Dooers (OTP via email).")(auth.login)
+app.command(name="whoami", help="Show the currently authenticated user.")(auth.whoami)
+app.command(name="logout", help="Clear local credentials.")(auth.logout)
 app.add_typer(agents.app, name="agents", help="List, create, and inspect your agents.")
 app.command(name="push", help="Archive cwd and push it as a new build of an agent.")(push.push)
 

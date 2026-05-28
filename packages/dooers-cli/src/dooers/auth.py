@@ -1,12 +1,13 @@
-"""`dooers auth` subcommands: login, whoami, logout."""
+"""`dooers login` / `whoami` / `logout` command implementations.
+
+Registered as top-level commands from cli.py.
+"""
 
 import typer
 
 from dooers.core_client import CoreClient, CoreClientError
 from dooers.settings import Settings
 from dooers.token_store import TokenStore, is_token_expired
-
-app = typer.Typer(no_args_is_help=True)
 
 
 def _settings(ctx: typer.Context) -> Settings:
@@ -17,18 +18,19 @@ def _settings(ctx: typer.Context) -> Settings:
     return s
 
 
-@app.command()
 def login(
     ctx: typer.Context,
-    email: str = typer.Option(..., prompt=True, help="Your email address."),
+    email: str | None = typer.Argument(None, help="Your email address. Prompted if omitted."),
 ) -> None:
     """Authenticate with Dooers via OTP sent to email."""
     settings = _settings(ctx)
+    if not email:
+        email = typer.prompt("Email")
     store = TokenStore()
 
     existing = store.load()
     if existing and not is_token_expired(existing):
-        typer.echo("Already authenticated. Run `dooers auth logout` first to re-login.")
+        typer.echo("Already authenticated. Run `dooers logout` first to re-login.")
         raise typer.Exit(code=0)
 
     client = CoreClient(base_url=settings.core_url)
@@ -46,17 +48,16 @@ def login(
     typer.echo("Authenticated.")
 
 
-@app.command()
 def whoami(ctx: typer.Context) -> None:
     """Show the currently authenticated user."""
     settings = _settings(ctx)
     store = TokenStore()
     token = store.load()
     if not token:
-        typer.echo("Not authenticated. Run `dooers auth login`.", err=True)
+        typer.echo("Not authenticated. Run `dooers login`.", err=True)
         raise typer.Exit(code=1)
     if is_token_expired(token):
-        typer.echo("Session expired. Run `dooers auth login`.", err=True)
+        typer.echo("Session expired. Run `dooers login`.", err=True)
         store.clear()
         raise typer.Exit(code=1)
 
@@ -69,7 +70,6 @@ def whoami(ctx: typer.Context) -> None:
     typer.echo(f"Authenticated as {me.email} (user_id={me.user_id})")
 
 
-@app.command()
 def logout(ctx: typer.Context) -> None:
     """Clear local credentials."""
     settings = _settings(ctx)
