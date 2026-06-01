@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir uv
 # run from inside `packages/`.)
 COPY dooers-protocol /tmp/dooers-protocol
 COPY dooers-push/pyproject.toml .
+COPY dooers-push/README.md .
 COPY dooers-push/src ./src
 
 # Install the local protocol first so the image carries exactly the
