@@ -161,9 +161,12 @@ The URL Map requires a default backend service for unmatched paths. We deploy a 
 gcloud run deploy dooers-agents-default-404 \
   --image=gcr.io/cloudrun/hello \
   --region=us-central1 \
-  --allow-unauthenticated \
+  --no-invoker-iam-check \
   --cpu-throttling \
   --project=<PROJECT_ID>
+# Use --no-invoker-iam-check (not --allow-unauthenticated) so the placeholder is
+# reachable through the LB even when the org enforces Domain Restricted Sharing
+# (iam.allowedPolicyMemberDomains), which rejects the allUsers binding.
 
 # 4b
 gcloud compute network-endpoint-groups create dooers-agents-default-neg \

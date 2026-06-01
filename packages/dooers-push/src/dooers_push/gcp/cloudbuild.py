@@ -23,7 +23,13 @@ def _build_deploy_script(
     owner_user_id: str,
     env: str,
 ) -> str:
-    """Bash script merging env.{env} / .env with base vars, then deploying."""
+    """Bash script merging env.{env} / .env with base vars, then deploying.
+
+    Uses --no-invoker-iam-check (not --allow-unauthenticated) so agents are
+    publicly reachable through the LB even when the org enforces Domain
+    Restricted Sharing (iam.allowedPolicyMemberDomains), which rejects the
+    allUsers binding that --allow-unauthenticated tries to set.
+    """
     return f"""#!/bin/bash
 set -e
 AGENT_ENV_VARS=""
@@ -54,7 +60,7 @@ if [ -n "$$AGENT_ENV_VARS" ]; then
 fi
 gcloud run deploy {service_name} \\
     --image={image} --region={region} --platform=managed \\
-    --allow-unauthenticated \\
+    --no-invoker-iam-check \\
     --service-account=agent-deploy-service@{project_id}.iam.gserviceaccount.com \\
     --set-env-vars="$$ALL_ENV_VARS" \\
     --labels=agent_id={agent_id},owner_user_id={owner_user_id},env={env} \\

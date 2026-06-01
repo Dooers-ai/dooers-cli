@@ -85,7 +85,7 @@ for R in roles/run.admin roles/artifactregistry.writer roles/logging.logWriter \
 done
 ```
 
-`roles/iam.serviceAccountUser` lets it deploy Cloud Run services that *run as* itself; `roles/run.admin` lets it set `--allow-unauthenticated` on agent services so the LB can reach them.
+`roles/iam.serviceAccountUser` lets it deploy Cloud Run services that *run as* itself; `roles/run.admin` lets it set `--no-invoker-iam-check` on agent services so the LB can reach them publicly.
 
 ---
 
@@ -114,13 +114,13 @@ gcloud builds submit packages/ \
   --project=$SERVICES
 ```
 
-**Deploy.** `--allow-unauthenticated` because the CLI authenticates with a *Dooers* session token (forwarded to core), not a GCP token.
+**Deploy.** The CLI authenticates with a *Dooers* session token (forwarded to core), not a GCP token, so the service must be publicly invokable. We use `--no-invoker-iam-check` rather than `--allow-unauthenticated`: it makes the service public **without** an `allUsers` IAM binding, which is required when the org enforces Domain Restricted Sharing (`iam.allowedPolicyMemberDomains`) — that constraint rejects `allUsers` and makes `--allow-unauthenticated` silently fail to grant public access (the deploy "succeeds with warnings" but the service returns 403). See the DRS note in Troubleshooting.
 
 ```bash
 gcloud run deploy dooers-push \
   --image=$IMAGE --region=$REGION --project=$SERVICES \
   --service-account=dooers-push-runtime@$SERVICES.iam.gserviceaccount.com \
-  --allow-unauthenticated \
+  --no-invoker-iam-check \
   --set-env-vars=GCP_PROJECT_ID=$AGENTS,GCP_REGION=$REGION,BUCKET_NAME=$BUCKET,ARTIFACT_REPO=agents,CORE_API_URL=https://api.dooers.ai,ENVIRONMENT=prod,DOOERS_LB_DOMAIN=agents.dooers.ai,DOOERS_LB_URL_MAP=dooers-agents-url-map,TRUSTED_HOSTS=push.dooers.ai
 ```
 
@@ -246,6 +246,12 @@ gcloud projects add-iam-policy-binding $SERVICES \
 **Push succeeds but the URL 404s for ~30–60s** — normal LB propagation. `wait_until_reachable` warns rather than fails; the path goes live shortly.
 
 **Image build can't find `dooers-protocol`** — you built with the wrong context. The source must be `packages/` (via the `cloudbuild.yaml`), not `packages/dooers-push/`.
+
+**Deploy "completes with warnings: Setting IAM policy failed" and the service returns 403** — the org enforces **Domain Restricted Sharing** (`constraints/iam.allowedPolicyMemberDomains`), which rejects the `allUsers` invoker binding that `--allow-unauthenticated` sets. Make the service public *without* `allUsers` by disabling the invoker IAM check:
+```bash
+gcloud run services update dooers-push --region=$REGION --project=$SERVICES --no-invoker-iam-check
+```
+This works as long as your org has **not** enforced `constraints/run.managed.requireInvokerIam` (it's off by default — no org-policy admin needed). Agents get the same treatment automatically: `cloudbuild.py` deploys them with `--no-invoker-iam-check`, and the LB's placeholder 404 in `gcp-lb.md` Step 4 must use it too. If `run.managed.requireInvokerIam` *is* enforced, an Org Policy Admin must set it to not-enforced on `dooers-services` and `dooers-agents` (or use the conditional-DRS-with-tags pattern from Google's "public Cloud Run with DRS" guide).
 
 ---
 
