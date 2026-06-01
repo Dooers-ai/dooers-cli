@@ -1,0 +1,18 @@
+# Used by `gcloud builds submit packages/` (build context = this dir).
+# Keeps the upload to just source — without this, every package's .venv
+# (~500 MiB) gets uploaded because gcloud finds no ignore file here.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.git/
+.gitignore
+.env
+.env.local
+*.local
