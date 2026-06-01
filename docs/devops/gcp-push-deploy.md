@@ -43,7 +43,7 @@ Confirmed supported and already implemented. A Global External Application Load 
 
 - `gcloud` installed and authenticated (`gcloud auth login`), with access to both projects.
 - **Core API already serving** `https://api.dooers.ai` (`/api/v1/session/verify` + agents CRUD). The push service forwards the user's bearer token to it; nothing here provisions core.
-- Region `us-central1` assumed throughout — substitute consistently if different. The LB NEG region **must** match the agent Cloud Run region.
+- Region `southamerica-east1` assumed throughout — substitute consistently if different. The LB NEG region **must** match the agent Cloud Run region (both set via `GCP_REGION`).
 - Two GCP projects created: `dooers-agents`, `dooers-services`.
 
 Set shell vars used below:
@@ -51,7 +51,7 @@ Set shell vars used below:
 ```bash
 AGENTS=dooers-agents
 SERVICES=dooers-services
-REGION=us-central1
+REGION=southamerica-east1
 BUCKET=dooers-agents-src        # must be globally unique; change if taken
 ```
 
@@ -228,13 +228,13 @@ dooers push                                      # re-run: same URL (idempotency
 
 ## Troubleshooting
 
-**`gcloud builds submit` fails pushing the image** — the Cloud Build service account in `dooers-services` needs Artifact Registry write + logging. Grant:
+**`gcloud builds submit` fails with `403 … <num>-compute@developer … storage.objects.get` (or fails pushing the image)** — recent Cloud Build runs builds as the **Compute Engine default service account**, which gets no roles by default and can't read the source tarball or push the image. Grant it the build + Artifact Registry roles (note: this is the `-compute@developer` SA, **not** the legacy `@cloudbuild` one):
 ```bash
 PNUM=$(gcloud projects describe $SERVICES --format='value(projectNumber)')
 gcloud projects add-iam-policy-binding $SERVICES \
-  --member=serviceAccount:$PNUM@cloudbuild.gserviceaccount.com --role=roles/artifactregistry.writer
+  --member=serviceAccount:$PNUM-compute@developer.gserviceaccount.com --role=roles/cloudbuild.builds.builder
 gcloud projects add-iam-policy-binding $SERVICES \
-  --member=serviceAccount:$PNUM@cloudbuild.gserviceaccount.com --role=roles/logging.logWriter
+  --member=serviceAccount:$PNUM-compute@developer.gserviceaccount.com --role=roles/artifactregistry.writer
 ```
 
 **Push fails `LB registration failed: URL map ... not found`** — Phase D hasn't run, or `DOOERS_LB_URL_MAP` is wrong. Confirm the URL map exists in `dooers-agents`.
