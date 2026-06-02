@@ -289,6 +289,10 @@ class LBManager:
         bs_resource = compute_v1.BackendService(
             name=name,
             protocol="HTTPS",
+            # Must match the agents URL map's scheme (a global external
+            # Application LB). Without this the API defaults to EXTERNAL
+            # (classic), which an EXTERNAL_MANAGED URL map cannot reference.
+            load_balancing_scheme="EXTERNAL_MANAGED",
             backends=[backend],
         )
         request = compute_v1.InsertBackendServiceRequest(
