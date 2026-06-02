@@ -11,7 +11,7 @@ def test_root_help_lists_top_level_commands() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     out = result.stdout
-    for cmd in ("login", "whoami", "logout", "agents", "push"):
+    for cmd in ("login", "whoami", "logout", "agents", "org", "push"):
         assert cmd in out
 
 

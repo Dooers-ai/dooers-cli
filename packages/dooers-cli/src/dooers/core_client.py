@@ -65,7 +65,9 @@ class CoreClient:
                     f"{self.api}/identity/token", cookies=r.cookies, timeout=self._timeout
                 )
                 d = _data(tr)
-                token = d["accessToken"]
+                token = d.get("accessToken")
+                if not token:
+                    raise CoreClientError("core returned no access token")
                 return token, int(time.time()) + int(d.get("expiresIn", ACCESS_TOKEN_FALLBACK_TTL))
             return token, int(time.time()) + ACCESS_TOKEN_FALLBACK_TTL
         except httpx.HTTPError as e:

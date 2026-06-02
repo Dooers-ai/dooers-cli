@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import httpx
-
 from dooers_protocol.errors import ErrorEnvelope
 from dooers_protocol.push import PushResponse
 

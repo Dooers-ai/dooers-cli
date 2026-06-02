@@ -14,6 +14,9 @@ def test_send_otp():
         return_value=httpx.Response(200, json={"success": True, "data": {}}))
     CoreClient(BASE).send_otp("a@b.c")
     assert r.called
+    import json as _json
+
+    assert _json.loads(r.calls.last.request.read()) == {"email": "a@b.c", "type": "sign-in"}
 
 
 @respx.mock

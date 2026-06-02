@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import yaml
-
 from dooers_protocol.agents import AgentManifest
 
 MANIFEST_FILENAME = "dooers.yaml"
