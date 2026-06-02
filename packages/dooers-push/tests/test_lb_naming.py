@@ -40,3 +40,22 @@ def test_neg_and_bs_names_keep_env() -> None:
 
 def test_shared_path_matcher_constant() -> None:
     assert SHARED_PATH_MATCHER == "agents-pm"
+
+
+from dooers_push.gcp.cloudbuild import cloud_run_service_name  # noqa: E402
+
+UUID = "550e8400-e29b-41d4-a716-446655440000"
+
+
+def test_service_name_starts_with_letter_for_uuid() -> None:
+    name = cloud_run_service_name(UUID, "prod")
+    assert name == f"agent-{UUID}-prod"
+    assert name[0].isalpha()  # Cloud Run names must start with a letter
+    assert len(name) <= 63
+
+
+def test_neg_targets_same_service_name() -> None:
+    from dooers_push.gcp import loadbalancer as lb
+
+    # NEG cloud_run_service must equal the deployed service name
+    assert lb._cloud_run_service(UUID, "dev") == cloud_run_service_name(UUID, "dev")

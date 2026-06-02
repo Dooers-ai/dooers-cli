@@ -68,10 +68,15 @@ gcloud run deploy {service_name} \\
     --timeout=300 --cpu-boost"""
 
 
-def _service_name(agent_id: str, env: str) -> str:
-    """Cloud Run service name. Lowercased; Cloud Run is strict."""
+def cloud_run_service_name(agent_id: str, env: str) -> str:
+    """Cloud Run service name. Letter-prefixed so it's valid even when
+    agent_id is a UUID that starts with a digit. Lowercased; '_' → '-'."""
     safe = agent_id.lower().replace("_", "-")
-    return f"{safe}-{env}"
+    return f"agent-{safe}-{env}"
+
+
+def _service_name(agent_id: str, env: str) -> str:
+    return cloud_run_service_name(agent_id, env)
 
 
 def trigger_build(

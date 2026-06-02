@@ -10,12 +10,18 @@ not create duplicates.
 
 from __future__ import annotations
 
+from dooers_push.gcp.cloudbuild import cloud_run_service_name
+
 SHARED_PATH_MATCHER = "agents-pm"
 
 
 # ---------------------------------------------------------------------------
 # Naming helpers (pure functions)
 # ---------------------------------------------------------------------------
+
+def _cloud_run_service(agent_id: str, env: str) -> str:
+    return cloud_run_service_name(agent_id, env)
+
 
 def safe_agent_id(agent_id: str) -> str:
     """Convert an agent_id to a DNS- and GCP-safe form.
@@ -243,7 +249,7 @@ class LBManager:
     async def _ensure_neg(self, agent_id: str, env: str) -> str:
         """Create or get the Serverless NEG. Returns its self-link URL."""
         name = neg_name(agent_id, env)
-        cloud_run_service = f"{safe_agent_id(agent_id)}-{env}"
+        cloud_run_service = _cloud_run_service(agent_id, env)
 
         neg_resource = compute_v1.NetworkEndpointGroup(
             name=name,
