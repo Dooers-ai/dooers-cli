@@ -105,7 +105,7 @@ Smallest piece. The agent already stores `serverConfig`; we add an explicit, nul
 - Remove shim fabrication + `DOOERS_USE_CORE_AGENTS` gating (v2 is the path).
 - `get_agent`: `GET /api/v2/agents/:agentId` (Bearer). Ownership check: `data.ownerUserId == session.user_id` (the controller also enforces access; we keep the explicit check). Parse `{success,data}`.
 - `patch_host_url(agent_id, host_url)`: `PATCH /api/v2/agents/:agentId {hostUrl: host_url}`. Replaces `patch_agent_url`/`deployed_url`.
-- `main.py`: call `patch_host_url(agent_id, ctx.lb_url)` after a successful pipeline.
+- `main.py`: call `patch_host_url(agent_id, ctx.lb_url)` after a successful pipeline **only when `ctx.env == "prod"`**. The agent record holds a single `hostUrl`; non-prod deploys are ephemeral and would otherwise overwrite the stable prod URL (last-write-wins). The dev/stg Cloud Run services + URLs still work; they're just not recorded in core.
 
 ### 5.3 UUID impact on GCP resource naming (important)
 v2 agent IDs are UUIDs, which can **start with a digit** — invalid for a Cloud Run **service name** (`^[a-z]([-a-z0-9]*[a-z0-9])?$`). Today `cloudbuild._service_name` and `loadbalancer._ensure_neg`'s `cloud_run_service` both produce `{safe}-{env}` (no prefix) and must stay identical.

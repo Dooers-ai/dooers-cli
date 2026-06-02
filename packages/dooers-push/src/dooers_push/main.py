@@ -139,10 +139,14 @@ async def push(
             audit=ctx.audit_report,
         )
 
-    try:
-        await core.patch_host_url(agent_id, ctx.lb_url)
-    except Exception as e:  # noqa: BLE001 — non-fatal: agent is live, URL just not recorded
-        logger.warning("patch_host_url failed for %s: %s", agent_id, e)
+    # Record the URL in core only for prod. The agent record holds a single
+    # hostUrl; non-prod deploys are ephemeral and would otherwise overwrite the
+    # stable prod URL (last-write-wins). The dev/stg services + URLs still work.
+    if ctx.env == "prod":
+        try:
+            await core.patch_host_url(agent_id, ctx.lb_url)
+        except Exception as e:  # noqa: BLE001 — non-fatal: agent is live, URL just not recorded
+            logger.warning("patch_host_url failed for %s: %s", agent_id, e)
     return PushResponse(
         agent_id=agent_id,
         build_id=ctx.build_id or "",
