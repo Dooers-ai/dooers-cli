@@ -2,9 +2,9 @@
 import httpx
 import pytest
 import respx
+from dooers_protocol.auth import AuthSession
 from fastapi import HTTPException
 
-from dooers_protocol.auth import AuthSession
 from dooers_push.core_client import CoreClient
 
 BASE = "https://core.test"

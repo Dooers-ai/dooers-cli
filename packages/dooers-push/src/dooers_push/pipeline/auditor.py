@@ -15,10 +15,10 @@ import re
 import tarfile
 import zipfile
 
-from google.cloud import storage
-
 from dooers_protocol.audit import AuditFinding, AuditReport, InfraManifest
 from dooers_protocol.push import BuildStatus
+from google.cloud import storage
+
 from dooers_push.pipeline.base import PipelineContext, PipelineStep, StepResult
 
 logger = logging.getLogger(__name__)

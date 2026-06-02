@@ -1,9 +1,9 @@
 """Session verification — forwards the Bearer token to core v2 /identity/me."""
 
 import httpx
+from dooers_protocol.auth import AuthSession
 from fastapi import HTTPException, Request
 
-from dooers_protocol.auth import AuthSession
 from dooers_push.settings import Settings
 
 

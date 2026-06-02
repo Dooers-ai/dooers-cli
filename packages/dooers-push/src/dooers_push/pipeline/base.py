@@ -2,12 +2,11 @@
 
 from abc import ABC, abstractmethod
 
-from pydantic import BaseModel, ConfigDict
-
 from dooers_protocol.agents import AgentRecord
 from dooers_protocol.audit import AuditReport
 from dooers_protocol.auth import AuthSession
 from dooers_protocol.push import BuildStatus
+from pydantic import BaseModel, ConfigDict
 
 
 class PipelineContext(BaseModel):

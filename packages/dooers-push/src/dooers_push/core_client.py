@@ -5,10 +5,9 @@
 """
 
 import httpx
-from fastapi import HTTPException
-
 from dooers_protocol.agents import AgentRecord
 from dooers_protocol.auth import AuthSession
+from fastapi import HTTPException
 
 
 class CoreClient:

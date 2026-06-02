@@ -10,7 +10,20 @@ not create duplicates.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from typing import TYPE_CHECKING
+
+import httpx
+from google.api_core import exceptions as gcp_exceptions
+from google.cloud import compute_v1
+
 from dooers_push.gcp.cloudbuild import cloud_run_service_name
+
+if TYPE_CHECKING:
+    from dooers_push.settings import Settings
+
+logger = logging.getLogger(__name__)
 
 SHARED_PATH_MATCHER = "agents-pm"
 
@@ -74,24 +87,10 @@ class LBError(RuntimeError):
 # LBManager
 # ---------------------------------------------------------------------------
 
-import asyncio
-import logging
-from typing import TYPE_CHECKING
-
-import httpx
-from google.api_core import exceptions as gcp_exceptions
-from google.cloud import compute_v1
-
-if TYPE_CHECKING:
-    from dooers_push.settings import Settings
-
-logger = logging.getLogger(__name__)
-
-
 class LBManager:
     """Per-agent LB registration. Idempotent on every call."""
 
-    def __init__(self, settings: "Settings") -> None:
+    def __init__(self, settings: Settings) -> None:
         self.project_id = settings.gcp_project_id
         self.region = settings.lb_region
         self.url_map_name = settings.lb_url_map

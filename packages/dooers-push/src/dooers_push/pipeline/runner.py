@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 
 from dooers_protocol.push import BuildStatus
+
 from dooers_push.pipeline.base import PipelineContext, PipelineStep, StepResult
 
 

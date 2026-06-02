@@ -4,6 +4,8 @@ import logging
 import os
 import uuid
 
+from dooers_protocol.errors import ErrorCode, ErrorEnvelope
+from dooers_protocol.push import BuildStatus, PushResponse
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
@@ -12,8 +14,6 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from dooers_protocol.errors import ErrorCode, ErrorEnvelope
-from dooers_protocol.push import BuildStatus, PushResponse
 from dooers_push import storage
 from dooers_push.auth import verify_session
 from dooers_push.core_client import CoreClient
@@ -104,9 +104,7 @@ async def push(
     session = await verify_session(request, settings)
     token = request.headers["Authorization"][len("Bearer "):]
     core = CoreClient(base_url=settings.core_api_url, token=token)
-    agent = await core.get_agent(agent_id, fallback_session=session)
-    if agent.owner_user_id != session.user_id:
-        raise HTTPException(status_code=403, detail=f"you do not own {agent_id}")
+    agent = await core.get_agent(agent_id, session)
 
     gcs_uri = await storage.upload_archive(
         settings, agent_id, archive, owner_user_id=session.user_id
@@ -141,7 +139,10 @@ async def push(
             audit=ctx.audit_report,
         )
 
-    await core.patch_agent_url(agent_id, ctx.lb_url)
+    try:
+        await core.patch_host_url(agent_id, ctx.lb_url)
+    except Exception as e:  # noqa: BLE001 — non-fatal: agent is live, URL just not recorded
+        logger.warning("patch_host_url failed for %s: %s", agent_id, e)
     return PushResponse(
         agent_id=agent_id,
         build_id=ctx.build_id or "",

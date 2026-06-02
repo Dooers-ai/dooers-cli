@@ -1,12 +1,12 @@
 """Verify the pipeline runner sequences stubbed steps correctly."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
-
 from dooers_protocol.agents import AgentRecord
 from dooers_protocol.auth import AuthSession
 from dooers_protocol.push import BuildStatus
+
 from dooers_push.pipeline import (
     AuditorStep,
     PipelineContext,
@@ -17,7 +17,7 @@ from dooers_push.pipeline import (
 
 @pytest.mark.asyncio
 async def test_auditor_and_provisioner_stubs_pass_through() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ctx = PipelineContext(
         agent=AgentRecord(
             agent_id="ag_test",

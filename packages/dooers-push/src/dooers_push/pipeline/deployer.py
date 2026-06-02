@@ -8,6 +8,7 @@ deploy-time naming in gcp/cloudbuild.py).
 import logging
 
 from dooers_protocol.push import BuildStatus
+
 from dooers_push.gcp.cloudbuild import trigger_build, wait_for_build
 from dooers_push.gcp.loadbalancer import LBError, LBManager
 from dooers_push.pipeline.base import PipelineContext, PipelineStep, StepResult

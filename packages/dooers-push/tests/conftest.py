@@ -4,7 +4,6 @@ Provides dummy GCP env vars so Settings.from_env() succeeds in tests
 without requiring a real GCP project to be configured.
 """
 
-import os
 
 import pytest
 
