@@ -24,6 +24,6 @@ class Settings:
     ) -> "Settings":
         return cls(
             core_url=(core_url or os.environ.get("DOOERS_CORE_URL") or "https://api.dooers.ai").rstrip("/"),
-            push_url=(push_url or os.environ.get("DOOERS_PUSH_URL") or "https://push.dooers.ai").rstrip("/"),
+            push_url=(push_url or os.environ.get("DOOERS_PUSH_URL") or "https://host.dooers.ai").rstrip("/"),
             env=(env or os.environ.get("DOOERS_ENV") or "prod"),
         )
