@@ -10,7 +10,7 @@ from dooers_protocol.push import BuildStatus, PushResponse
 
 
 def test_protocol_version_exported() -> None:
-    assert PROTOCOL_VERSION == "1"
+    assert PROTOCOL_VERSION == "2"
 
 
 def test_agent_record_roundtrip() -> None:
@@ -31,9 +31,10 @@ def test_agent_manifest_rejects_unknown_fields() -> None:
 
     with pytest.raises(ValidationError):
         AgentManifest(
-            protocol_version="1",
-            agent_id="ag_8h2k",
+            protocol_version="2",
+            agent_id="550e8400-e29b-41d4-a716-446655440000",
             name="x",
+            organization_id="org_1",
             unknown_field="oops",  # type: ignore[call-arg]
         )
 
@@ -64,7 +65,7 @@ def test_error_envelope() -> None:
     assert env.error_code == ErrorCode.unauthenticated
 
 
-def test_create_agent_request_defaults() -> None:
-    req = CreateAgentRequest(name="my-agent")
-    assert req.runtime == "docker"
-    assert req.env_required == []
+def test_create_agent_request_requires_org() -> None:
+    req = CreateAgentRequest(organization_id="org_1", name="my-agent")
+    assert req.organization_id == "org_1"
+    assert req.name == "my-agent"
