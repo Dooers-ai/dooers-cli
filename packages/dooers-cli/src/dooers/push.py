@@ -67,8 +67,9 @@ def push(
         agent_id = manifest.agent_id
 
     # Auth.
-    token = TokenStore().load()
-    if not token or is_token_expired(token):
+    store = TokenStore()
+    token = store.load()
+    if not token or is_token_expired(token, store=store):
         typer.echo("Not authenticated. Run `dooers login`.", err=True)
         raise typer.Exit(code=1)
 
