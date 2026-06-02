@@ -3,7 +3,6 @@
 import time
 
 import httpx
-
 from dooers_protocol.auth import WhoamiResponse
 
 ACCESS_TOKEN_FALLBACK_TTL = 60 * 60 * 24 * 7  # 7d if core doesn't tell us
@@ -62,7 +61,9 @@ class CoreClient:
             token = r.headers.get("set-auth-token")
             if not token:
                 # fallback: mint via /identity/token using the session cookie just set
-                tr = httpx.post(f"{self.api}/identity/token", cookies=r.cookies, timeout=self._timeout)
+                tr = httpx.post(
+                    f"{self.api}/identity/token", cookies=r.cookies, timeout=self._timeout
+                )
                 d = _data(tr)
                 token = d["accessToken"]
                 return token, int(time.time()) + int(d.get("expiresIn", ACCESS_TOKEN_FALLBACK_TTL))
@@ -80,13 +81,18 @@ class CoreClient:
 
     def revoke(self) -> None:
         try:
-            httpx.post(f"{self.api}/identity/revoke", headers=self._headers(), timeout=self._timeout)
+            httpx.post(
+                f"{self.api}/identity/revoke", headers=self._headers(), timeout=self._timeout
+            )
         except httpx.HTTPError:
             pass  # best-effort
 
     def list_organizations(self) -> list[dict]:
         try:
-            r = httpx.get(f"{self.api}/organizations", headers=self._headers(), timeout=self._timeout)
-            return _data(r)
+            r = httpx.get(
+                f"{self.api}/organizations", headers=self._headers(), timeout=self._timeout
+            )
+            result = _data(r)
+            return list(result) if isinstance(result, list) else []
         except httpx.HTTPError as e:
             raise CoreClientError(f"list organizations failed: {e}") from e

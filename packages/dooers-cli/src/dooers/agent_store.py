@@ -3,7 +3,6 @@
 import json
 
 import httpx
-
 from dooers_protocol.agents import AgentRecord, CreateAgentRequest
 
 
@@ -50,7 +49,8 @@ class HTTPCoreAgentStore:
         return _record(_data(r))
 
     def list_by_org(self, organization_id: str) -> list[AgentRecord]:
-        r = httpx.get(f"{self.api}/agents/organization/{organization_id}", headers=self._h(), timeout=self._timeout)
+        url = f"{self.api}/agents/organization/{organization_id}"
+        r = httpx.get(url, headers=self._h(), timeout=self._timeout)
         return [_record(d) for d in _data(r)]
 
     def get(self, agent_id: str) -> AgentRecord:

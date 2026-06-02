@@ -3,14 +3,14 @@
 from pathlib import Path
 
 import typer
+from dooers_protocol import PROTOCOL_VERSION
+from dooers_protocol.agents import AgentManifest, CreateAgentRequest
 
 from dooers import config
 from dooers.agent_store import AgentStoreError, HTTPCoreAgentStore
 from dooers.org import resolve_org_for_cli
 from dooers.settings import Settings
 from dooers.token_store import TokenStore, is_token_expired
-from dooers_protocol import PROTOCOL_VERSION
-from dooers_protocol.agents import AgentManifest, CreateAgentRequest
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -71,4 +71,7 @@ def show(ctx: typer.Context, agent_id: str = typer.Argument(...)) -> None:
     except KeyError:
         typer.echo(f"Agent {agent_id} not found.", err=True)
         raise typer.Exit(code=1)
-    typer.echo(f"ID:    {r.agent_id}\nName:  {r.name}\nOrg:   {r.organization_id}\nURL:   {r.host_url or '—'}")
+    typer.echo(f"ID:    {r.agent_id}")
+    typer.echo(f"Name:  {r.name}")
+    typer.echo(f"Org:   {r.organization_id}")
+    typer.echo(f"URL:   {r.host_url or '—'}")

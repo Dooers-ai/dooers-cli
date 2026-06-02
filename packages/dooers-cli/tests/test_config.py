@@ -3,10 +3,10 @@
 from pathlib import Path
 
 import pytest
-
-from dooers.config import MANIFEST_FILENAME, read_manifest, write_manifest
 from dooers_protocol import PROTOCOL_VERSION
 from dooers_protocol.agents import AgentManifest
+
+from dooers.config import MANIFEST_FILENAME, read_manifest, write_manifest
 
 
 def test_write_then_read_roundtrip(tmp_path: Path) -> None:
@@ -38,8 +38,13 @@ def test_write_creates_named_file(tmp_path: Path) -> None:
 
 
 def test_read_rejects_unknown_fields(tmp_path: Path) -> None:
-    (tmp_path / MANIFEST_FILENAME).write_text(
-        "protocol_version: '2'\nagent_id: 550e8400-e29b-41d4-a716-446655440002\nname: x\norganization_id: org_1\nbogus: nope\n"
+    yaml_content = (
+        "protocol_version: '2'\n"
+        "agent_id: 550e8400-e29b-41d4-a716-446655440002\n"
+        "name: x\n"
+        "organization_id: org_1\n"
+        "bogus: nope\n"
     )
+    (tmp_path / MANIFEST_FILENAME).write_text(yaml_content)
     with pytest.raises(Exception):  # pydantic ValidationError
         read_manifest(directory=tmp_path)

@@ -29,22 +29,21 @@ def login(
     store = TokenStore()
 
     existing = store.load()
-    if existing and not is_token_expired(existing):
+    if existing and not is_token_expired(existing, store=store):
         typer.echo("Already authenticated. Run `dooers logout` first to re-login.")
         raise typer.Exit(code=0)
 
     client = CoreClient(base_url=settings.core_url)
     try:
         typer.echo("Requesting verification code…")
-        email_id = client.login_request_otp(email)
-        typer.echo("Verification code sent to your email.")
-        code = typer.prompt("Enter the code")
-        token = client.login_verify_otp(email_id=email_id, code=code)
+        client.send_otp(email)
+        code = typer.prompt("Enter the code emailed to you")
+        token, expires_at = client.verify_otp(email, code)
     except CoreClientError as e:
         typer.echo(f"Authentication failed: {e}", err=True)
         raise typer.Exit(code=1) from e
 
-    store.save(token)
+    store.save(token, expires_at=expires_at)
     typer.echo("Authenticated.")
 
 
@@ -56,14 +55,14 @@ def whoami(ctx: typer.Context) -> None:
     if not token:
         typer.echo("Not authenticated. Run `dooers login`.", err=True)
         raise typer.Exit(code=1)
-    if is_token_expired(token):
+    if is_token_expired(token, store=store):
         typer.echo("Session expired. Run `dooers login`.", err=True)
         store.clear()
         raise typer.Exit(code=1)
 
     client = CoreClient(base_url=settings.core_url, token=token)
     try:
-        me = client.whoami()
+        me = client.me()
     except CoreClientError as e:
         typer.echo(f"whoami failed: {e}", err=True)
         raise typer.Exit(code=1) from e
@@ -76,6 +75,6 @@ def logout(ctx: typer.Context) -> None:
     store = TokenStore()
     token = store.load()
     if token:
-        CoreClient(base_url=settings.core_url, token=token).logout()
+        CoreClient(base_url=settings.core_url, token=token).revoke()
     store.clear()
     typer.echo("Logged out.")

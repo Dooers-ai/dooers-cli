@@ -4,6 +4,7 @@ import os
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
@@ -14,7 +15,7 @@ from dooers.settings import Settings
 from dooers.token_store import TokenStore, is_token_expired
 
 
-def _spinner(message: str) -> "callable[[], None]":  # type: ignore[type-arg]
+def _spinner(message: str) -> Callable[[], None]:
     """Background spinner on stderr. Returns a stopper function."""
     stop = threading.Event()
     frames = "|/-\\"
