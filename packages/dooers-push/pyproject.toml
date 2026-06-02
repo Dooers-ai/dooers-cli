@@ -45,6 +45,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.15.11",
     "build>=1.4.3",
+    "respx>=0.21.1",
 ]
 
 [tool.ruff]
