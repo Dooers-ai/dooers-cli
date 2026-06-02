@@ -65,16 +65,6 @@ quote-style = "double"
 [[tool.mypy.overrides]]
 module = ["google.*", "slowapi.*"]
 ignore_missing_imports = true
-ignore_errors = true
-
-[[tool.mypy.overrides]]
-module = [
-    "dooers_push.storage",
-    "dooers_push.pipeline.auditor",
-    "dooers_push.gcp.cloudbuild",
-    "dooers_push.main",
-]
-ignore_errors = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

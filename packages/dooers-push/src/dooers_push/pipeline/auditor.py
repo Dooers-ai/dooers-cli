@@ -17,7 +17,7 @@ import zipfile
 
 from dooers_protocol.audit import AuditFinding, AuditReport, InfraManifest
 from dooers_protocol.push import BuildStatus
-from google.cloud import storage
+from google.cloud import storage  # type: ignore[attr-defined]
 
 from dooers_push.pipeline.base import PipelineContext, PipelineStep, StepResult
 

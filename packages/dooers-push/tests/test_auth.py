@@ -51,3 +51,15 @@ async def test_verify_session_missing_bearer() -> None:
     with pytest.raises(HTTPException) as e:
         await verify_session(_req(None), _settings())
     assert e.value.status_code == 401
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_verify_session_core_unreachable_503() -> None:
+    s = _settings()
+    respx.get(f"{s.core_api_url}/api/v2/identity/me").mock(
+        side_effect=httpx.ConnectError("boom")
+    )
+    with pytest.raises(HTTPException) as e:
+        await verify_session(_req("tok"), s)
+    assert e.value.status_code == 503

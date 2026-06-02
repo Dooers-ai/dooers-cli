@@ -153,7 +153,7 @@ def trigger_build(
         timeout={"seconds": 1800},
     )
 
-    client = cloudbuild_v1.services.cloud_build.CloudBuildClient()
+    client = cloudbuild_v1.services.cloud_build.CloudBuildClient()  # type: ignore[attr-defined]
     op = client.create_build(project_id=project_id, build=build)
     # Extract build id from operation metadata
     metadata = cloudbuild_v1.BuildOperationMetadata()
@@ -170,7 +170,7 @@ async def wait_for_build(build_id: str, project_id: str, *, timeout_s: int = 540
     """
     from google.cloud.devtools.cloudbuild_v1.types import Build
 
-    client = cloudbuild_v1.services.cloud_build.CloudBuildAsyncClient()
+    client = cloudbuild_v1.services.cloud_build.CloudBuildAsyncClient()  # type: ignore[attr-defined]
     deadline = asyncio.get_running_loop().time() + timeout_s
     while asyncio.get_running_loop().time() < deadline:
         b = await client.get_build(project_id=project_id, id=build_id)

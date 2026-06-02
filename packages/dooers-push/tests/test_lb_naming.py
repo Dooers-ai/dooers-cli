@@ -2,6 +2,7 @@
 
 import pytest
 
+from dooers_push.gcp.cloudbuild import cloud_run_service_name
 from dooers_push.gcp.loadbalancer import (
     SHARED_PATH_MATCHER,
     bs_name,
@@ -42,8 +43,6 @@ def test_shared_path_matcher_constant() -> None:
     assert SHARED_PATH_MATCHER == "agents-pm"
 
 
-from dooers_push.gcp.cloudbuild import cloud_run_service_name  # noqa: E402
-
 UUID = "550e8400-e29b-41d4-a716-446655440000"
 
 
@@ -51,7 +50,7 @@ def test_service_name_starts_with_letter_for_uuid() -> None:
     name = cloud_run_service_name(UUID, "prod")
     assert name == f"agent-{UUID}-prod"
     assert name[0].isalpha()  # Cloud Run names must start with a letter
-    assert len(name) <= 63
+    assert len(name) <= 49  # Cloud Run service-name length limit
 
 
 def test_neg_targets_same_service_name() -> None:

@@ -47,7 +47,7 @@ if os.environ.get("ENVIRONMENT") == "prod":
 # enforces independently. Per-IP key. Configurable via env var.
 limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
 
 # Validate required env vars at startup so misconfiguration fails fast,

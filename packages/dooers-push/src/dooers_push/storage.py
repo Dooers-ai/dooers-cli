@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from fastapi import UploadFile
-from google.cloud import storage
+from google.cloud import storage  # type: ignore[attr-defined]
 
 from dooers_push.settings import Settings
 
