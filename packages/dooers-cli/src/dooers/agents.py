@@ -1,104 +1,74 @@
-"""`dooers agents` subcommands: list, create, show.
+"""`dooers agents` subcommands: list, create, show (core v2)."""
 
-By default uses FileShimAgentStore (no core dependency required).
-Set DOOERS_USE_CORE_AGENTS=1 to switch to HTTPCoreAgentStore.
-"""
-
-import os
 from pathlib import Path
 
 import typer
 
 from dooers import config
-from dooers.agent_store import (
-    AgentStore,
-    FileShimAgentStore,
-    HTTPCoreAgentStore,
-)
-from dooers.core_client import CoreClient, CoreClientError
+from dooers.agent_store import AgentStoreError, HTTPCoreAgentStore
+from dooers.org import resolve_org_for_cli
 from dooers.settings import Settings
 from dooers.token_store import TokenStore, is_token_expired
 from dooers_protocol import PROTOCOL_VERSION
-from dooers_protocol.agents import AgentManifest, CreateAgentRequest, Runtime
+from dooers_protocol.agents import AgentManifest, CreateAgentRequest
 
 app = typer.Typer(no_args_is_help=True)
 
 
-def _ensure_authenticated() -> tuple[str, str]:
-    """Returns (token, user_id) or exits."""
-    store = TokenStore()
-    token = store.load()
-    if not token or is_token_expired(token):
+def _store(ctx: typer.Context) -> tuple[HTTPCoreAgentStore, Settings]:
+    settings: Settings = ctx.obj
+    store_token = TokenStore()
+    token = store_token.load()
+    if not token or is_token_expired(token, store=store_token):
         typer.echo("Not authenticated. Run `dooers login`.", err=True)
         raise typer.Exit(code=1)
-    return token, ""  # user_id filled per-call below
-
-
-def _resolve_store(ctx: typer.Context) -> AgentStore:
-    settings: Settings = ctx.obj
-    token, _ = _ensure_authenticated()
-    if os.environ.get("DOOERS_USE_CORE_AGENTS") == "1":
-        return HTTPCoreAgentStore(base_url=settings.core_url, token=token)
-    # Shim mode: derive owner_user_id from whoami.
-    try:
-        me = CoreClient(base_url=settings.core_url, token=token).whoami()
-    except CoreClientError as e:
-        typer.echo(f"whoami failed: {e}", err=True)
-        raise typer.Exit(code=1) from e
-    return FileShimAgentStore(owner_user_id=me.user_id)
-
-
-@app.command(name="list")
-def list_agents(ctx: typer.Context) -> None:
-    """List the agents owned by the authenticated user."""
-    store = _resolve_store(ctx)
-    records = store.list()
-    if not records:
-        typer.echo("No agents yet. Try `dooers agents create --name my-agent`.")
-        return
-    typer.echo(f"{'ID':<14}{'NAME':<32}{'STATUS':<12}URL")
-    for r in records:
-        status = "deployed" if r.deployed_url else "draft"
-        url = r.deployed_url or "—"
-        typer.echo(f"{r.agent_id:<14}{r.name:<32}{status:<12}{url}")
+    return HTTPCoreAgentStore(settings.core_url, token), settings
 
 
 @app.command()
 def create(
     ctx: typer.Context,
     name: str = typer.Option(..., help="Display name for the new agent."),
-    runtime: Runtime = typer.Option("docker", help="docker | python | node"),
+    org: str | None = typer.Option(None, "--org", help="Organization id (else resolved/prompted)."),
 ) -> None:
-    """Create an agent record and write dooers.yaml in cwd."""
-    store = _resolve_store(ctx)
-    record = store.create(CreateAgentRequest(name=name, runtime=runtime))
-    manifest = AgentManifest(
-        protocol_version=PROTOCOL_VERSION,
-        agent_id=record.agent_id,
-        name=record.name,
-        runtime=record.runtime,
-        env_required=record.env_required,
+    store, settings = _store(ctx)
+    organization_id = resolve_org_for_cli(settings, org)
+    try:
+        rec = store.create(CreateAgentRequest(organization_id=organization_id, name=name))
+    except AgentStoreError as e:
+        typer.echo(f"create failed: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    config.write_manifest(
+        AgentManifest(
+            protocol_version=PROTOCOL_VERSION,
+            agent_id=rec.agent_id,
+            name=rec.name,
+            organization_id=rec.organization_id or organization_id,
+        ),
+        directory=Path.cwd(),
     )
-    config.write_manifest(manifest, directory=Path.cwd())
-    typer.echo(f"Created {record.agent_id}. {config.MANIFEST_FILENAME} written.")
+    typer.echo(f"Created {rec.agent_id}. {config.MANIFEST_FILENAME} written.")
+
+
+@app.command(name="list")
+def list_agents(ctx: typer.Context, org: str | None = typer.Option(None, "--org")) -> None:
+    store, settings = _store(ctx)
+    organization_id = resolve_org_for_cli(settings, org)
+    records = store.list_by_org(organization_id)
+    if not records:
+        typer.echo("No agents yet. Try `dooers agents create --name my-agent`.")
+        return
+    typer.echo(f"{'ID':<38}{'NAME':<24}URL")
+    for r in records:
+        typer.echo(f"{r.agent_id:<38}{r.name:<24}{r.host_url or '—'}")
 
 
 @app.command()
-def show(
-    ctx: typer.Context,
-    agent_id: str = typer.Argument(..., help="Agent ID (e.g. ag_8h2k)."),
-) -> None:
-    """Show details of a single agent."""
-    store = _resolve_store(ctx)
+def show(ctx: typer.Context, agent_id: str = typer.Argument(...)) -> None:
+    store, _ = _store(ctx)
     try:
         r = store.get(agent_id)
     except KeyError:
         typer.echo(f"Agent {agent_id} not found.", err=True)
         raise typer.Exit(code=1)
-    typer.echo(f"ID:          {r.agent_id}")
-    typer.echo(f"Name:        {r.name}")
-    typer.echo(f"Runtime:     {r.runtime}")
-    typer.echo(f"Env needed:  {', '.join(r.env_required) or '—'}")
-    typer.echo(f"Status:      {'deployed' if r.deployed_url else 'draft'}")
-    typer.echo(f"URL:         {r.deployed_url or '—'}")
-    typer.echo(f"Created:     {r.created_at.isoformat()}")
+    typer.echo(f"ID:    {r.agent_id}\nName:  {r.name}\nOrg:   {r.organization_id}\nURL:   {r.host_url or '—'}")
