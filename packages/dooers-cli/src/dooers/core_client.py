@@ -1,109 +1,92 @@
-"""HTTP client for the Dooers core API (auth, agent records).
+"""HTTP client for Dooers core v2 (better-auth OTP + agents)."""
 
-Reference behavior: see v1 CLI flow in ../../../deploy-service/cli/dooers/cli.py
-- /api/v1/session/request  → returns {"output": {"email_id": "..."}}
-- /api/v1/session/create   → returns auth token via `auth` cookie
-- /api/v1/session/verify   → returns user dict
-- /api/v1/session/remove   → logout
-"""
+import time
 
 import httpx
-from pydantic import ValidationError
 
-from dooers_protocol.agents import AgentRecord, CreateAgentRequest
 from dooers_protocol.auth import WhoamiResponse
+
+ACCESS_TOKEN_FALLBACK_TTL = 60 * 60 * 24 * 7  # 7d if core doesn't tell us
 
 
 class CoreClientError(RuntimeError):
-    """Anything we'd want to surface as a CLI-friendly error."""
+    """CLI-friendly error."""
+
+
+def _data(resp: httpx.Response) -> dict:
+    body = resp.json()
+    if isinstance(body, dict) and body.get("success") is False:
+        raise CoreClientError(body.get("error", {}).get("message", f"HTTP {resp.status_code}"))
+    if resp.status_code >= 400:
+        raise CoreClientError(f"HTTP {resp.status_code}")
+    return body.get("data", body) if isinstance(body, dict) else body
 
 
 class CoreClient:
-    def __init__(self, base_url: str, token: str | None = None, timeout: float = 10.0) -> None:
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, base_url: str, token: str | None = None, timeout: float = 15.0) -> None:
+        self.api = base_url.rstrip("/") + "/api/v2"
         self.token = token
         self._timeout = timeout
 
-    # ------ auth ---------------------------------------------------------
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
 
-    def login_request_otp(self, email: str) -> str:
-        """POST /api/v1/session/request. Returns `email_id`."""
+    # ---- auth ----
+    def auth_method(self) -> str:
+        try:
+            r = httpx.get(f"{self.api}/identity/auth-method", timeout=self._timeout)
+            return _data(r).get("method", "otp")
+        except httpx.HTTPError as e:
+            raise CoreClientError(f"auth-method failed: {e}") from e
+
+    def send_otp(self, email: str) -> None:
         try:
             r = httpx.post(
-                f"{self.base_url}/api/v1/session/request",
-                json={"email": email, "method": "email"},
+                f"{self.api}/auth/email-otp/send-verification-otp",
+                json={"email": email, "type": "sign-in"},
                 timeout=self._timeout,
             )
-            r.raise_for_status()
-            data = r.json()
-            email_id = data.get("output", {}).get("email_id")
-            if not email_id:
-                raise CoreClientError(f"core returned no email_id (body: {data})")
-            return email_id
+            _data(r)
         except httpx.HTTPError as e:
-            raise CoreClientError(f"failed to request OTP: {e}") from e
+            raise CoreClientError(f"failed to send code: {e}") from e
 
-    def login_verify_otp(self, email_id: str, code: str) -> str:
-        """POST /api/v1/session/create. Returns the auth token (cookie value)."""
+    def verify_otp(self, email: str, code: str) -> tuple[str, int]:
+        """Returns (bearer_token, expires_at_epoch)."""
         try:
             r = httpx.post(
-                f"{self.base_url}/api/v1/session/create",
-                json={"email_id": email_id, "code": code},
+                f"{self.api}/auth/sign-in/email-otp",
+                json={"email": email, "otp": code},
                 timeout=self._timeout,
             )
-            r.raise_for_status()
-            cookie = r.cookies.get("auth")
-            if cookie:
-                return cookie
-            # fallback: token may also appear in body
-            token = r.json().get("output", {}).get("token")
-            if token:
-                return token
-            raise CoreClientError("core returned no auth token")
+            _data(r)  # raises on error envelope
+            token = r.headers.get("set-auth-token")
+            if not token:
+                # fallback: mint via /identity/token using the session cookie just set
+                tr = httpx.post(f"{self.api}/identity/token", cookies=r.cookies, timeout=self._timeout)
+                d = _data(tr)
+                token = d["accessToken"]
+                return token, int(time.time()) + int(d.get("expiresIn", ACCESS_TOKEN_FALLBACK_TTL))
+            return token, int(time.time()) + ACCESS_TOKEN_FALLBACK_TTL
         except httpx.HTTPError as e:
-            raise CoreClientError(f"failed to verify OTP: {e}") from e
+            raise CoreClientError(f"failed to verify code: {e}") from e
 
-    def whoami(self) -> WhoamiResponse:
-        if not self.token:
-            raise CoreClientError("not authenticated")
+    def me(self) -> WhoamiResponse:
         try:
-            r = httpx.get(
-                f"{self.base_url}/api/v1/session/verify",
-                cookies={"auth": self.token},
-                timeout=self._timeout,
-            )
-            r.raise_for_status()
-            data = r.json()
-            output = data.get("output", data)
-            # The core response shape isn't strict; accept either flat or nested.
-            user_id = output.get("user_id") or output.get("id") or output.get("user", {}).get("id", "")
-            email = output.get("email") or output.get("user", {}).get("email", "")
-            try:
-                return WhoamiResponse(user_id=user_id, email=email)
-            except ValidationError as e:
-                raise CoreClientError(f"unexpected /session/verify shape: {data}") from e
+            r = httpx.get(f"{self.api}/identity/me", headers=self._headers(), timeout=self._timeout)
+            d = _data(r)
+            return WhoamiResponse(user_id=d.get("id", ""), email=d.get("email", ""))
         except httpx.HTTPError as e:
-            raise CoreClientError(f"whoami failed: {e}") from e
+            raise CoreClientError(f"me failed: {e}") from e
 
-    def logout(self) -> None:
-        if not self.token:
-            return
+    def revoke(self) -> None:
         try:
-            httpx.post(
-                f"{self.base_url}/api/v1/session/remove",
-                cookies={"auth": self.token},
-                timeout=self._timeout,
-            )
+            httpx.post(f"{self.api}/identity/revoke", headers=self._headers(), timeout=self._timeout)
         except httpx.HTTPError:
-            pass  # logout is best-effort
+            pass  # best-effort
 
-    # ------ agents (stub for M2) -----------------------------------------
-
-    def list_agents(self) -> list[AgentRecord]:
-        raise NotImplementedError("M2")
-
-    def create_agent(self, req: CreateAgentRequest) -> AgentRecord:
-        raise NotImplementedError("M2")
-
-    def get_agent(self, agent_id: str) -> AgentRecord:
-        raise NotImplementedError("M2")
+    def list_organizations(self) -> list[dict]:
+        try:
+            r = httpx.get(f"{self.api}/organizations", headers=self._headers(), timeout=self._timeout)
+            return _data(r)
+        except httpx.HTTPError as e:
+            raise CoreClientError(f"list organizations failed: {e}") from e

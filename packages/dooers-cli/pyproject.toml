@@ -51,6 +51,7 @@ dev = [
     "poethepoet>=0.44.0",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
+    "respx>=0.21.1",
     "ruff>=0.15.11",
     "build>=1.4.3",
     "types-pyyaml>=6.0.0",
