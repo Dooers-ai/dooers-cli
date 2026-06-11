@@ -1,6 +1,12 @@
 """TDD tests for manifest_sync.build_agent_patch."""
 
-from dooers_protocol.agents import AgentManifest, ProfileConfig, WhatsAppConfig
+from dooers_protocol.agents import (
+    AgentManifest,
+    ProfileConfig,
+    SuggestedPrompt,
+    UiConfig,
+    WhatsAppConfig,
+)
 
 from dooers.manifest_sync import build_agent_patch
 
@@ -179,3 +185,43 @@ def test_deployed_url_trailing_slash_stripped():
     m = _manifest(message_path="/agent")
     patch = build_agent_patch(m, "https://agents.dooers.ai/ag-x/")
     assert patch["serverConfig"]["apiMessagesUrl"] == "wss://agents.dooers.ai/ag-x/agent"
+
+
+# ---------------------------------------------------------------------------
+# ui → settings.dooersUi_settings
+# ---------------------------------------------------------------------------
+
+
+def test_ui_hide_flags_mapped():
+    m = _manifest(ui=UiConfig(hide_mic=True, hide_attachments=False))
+    patch = build_agent_patch(m, DEPLOYED)
+    ui = patch["settings"]["dooersUi_settings"]
+    assert ui == {"hide_mic": True, "hide_attachments": False}
+    # hide_textinput was None → omitted
+    assert "hide_textinput" not in ui
+
+
+def test_ui_suggested_prompts_mapped():
+    m = _manifest(
+        ui=UiConfig(suggested_prompts=[SuggestedPrompt(title="Hi", prompt="say hi")])
+    )
+    patch = build_agent_patch(m, DEPLOYED)
+    assert patch["settings"]["dooersUi_settings"]["suggested_prompts"] == [
+        {"title": "Hi", "prompt": "say hi"}
+    ]
+
+
+def test_ui_empty_not_in_patch():
+    m = _manifest(ui=UiConfig())
+    patch = build_agent_patch(m, DEPLOYED)
+    assert "settings" not in patch
+
+
+def test_ui_and_whatsapp_coexist_under_settings():
+    m = _manifest(
+        whatsapp=WhatsAppConfig(enabled=True, path="/wa"),
+        ui=UiConfig(hide_mic=True),
+    )
+    patch = build_agent_patch(m, DEPLOYED)
+    assert patch["settings"]["integration_settings"]["whatsapp"]["enabled"] is True
+    assert patch["settings"]["dooersUi_settings"]["hide_mic"] is True

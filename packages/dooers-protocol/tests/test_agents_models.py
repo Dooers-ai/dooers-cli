@@ -6,8 +6,26 @@ from dooers_protocol.agents import (
     AgentRecord,
     CreateAgentRequest,
     ProfileConfig,
+    SuggestedPrompt,
+    UiConfig,
     WhatsAppConfig,
 )
+
+
+def test_manifest_ui_config_validates_and_forbids_extra():
+    m = AgentManifest(
+        protocol_version="2",
+        agent_id="ag-x",
+        name="x",
+        organization_id="org_1",
+        ui=UiConfig(hide_mic=True, suggested_prompts=[SuggestedPrompt(title="t", prompt="p")]),
+    )
+    assert m.ui.hide_mic is True
+    assert m.ui.suggested_prompts[0].title == "t"
+    with pytest.raises(ValidationError):
+        UiConfig(bogus=1)  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        SuggestedPrompt(title="only-title")  # type: ignore[call-arg]  # missing prompt
 
 
 def test_agent_record_v2_shape():

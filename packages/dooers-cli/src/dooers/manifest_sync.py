@@ -54,4 +54,20 @@ def build_agent_patch(manifest: AgentManifest, deployed_url: str) -> dict:
         if prof:
             patch["profile"] = prof
 
+    if manifest.ui:
+        ui: dict = {}
+        u = manifest.ui
+        if u.hide_mic is not None:
+            ui["hide_mic"] = u.hide_mic
+        if u.hide_textinput is not None:
+            ui["hide_textinput"] = u.hide_textinput
+        if u.hide_attachments is not None:
+            ui["hide_attachments"] = u.hide_attachments
+        if u.suggested_prompts:
+            ui["suggested_prompts"] = [
+                {"title": sp.title, "prompt": sp.prompt} for sp in u.suggested_prompts
+            ]
+        if ui:
+            patch.setdefault("settings", {})["dooersUi_settings"] = ui
+
     return patch

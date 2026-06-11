@@ -8,6 +8,7 @@ from dooers_protocol.agents import (
     AgentManifest,
     CreateAgentRequest,
     ProfileConfig,
+    UiConfig,
     WhatsAppConfig,
 )
 
@@ -57,6 +58,7 @@ def create(
             message_scheme="wss",
             whatsapp=WhatsAppConfig(enabled=False, path=None),
             profile=ProfileConfig(),
+            ui=UiConfig(),
         ),
         directory=Path.cwd(),
     )

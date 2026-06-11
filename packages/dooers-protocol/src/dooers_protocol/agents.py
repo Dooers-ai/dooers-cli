@@ -38,6 +38,22 @@ class ProfileConfig(BaseModel):
     usage_limits: list[str] = []
 
 
+class SuggestedPrompt(BaseModel):
+    """A shortcut shown below the chat greeting."""
+    model_config = ConfigDict(extra="forbid")
+    title: str
+    prompt: str
+
+
+class UiConfig(BaseModel):
+    """Dooers chat-UI chrome (maps to core `settings.dooersUi_settings`)."""
+    model_config = ConfigDict(extra="forbid")
+    hide_mic: bool | None = None
+    hide_textinput: bool | None = None
+    hide_attachments: bool | None = None
+    suggested_prompts: list[SuggestedPrompt] = []
+
+
 class AgentManifest(BaseModel):
     """Schema of `dooers.yaml`. Written by `dooers agents create`, applied by `dooers push`."""
     model_config = ConfigDict(extra="forbid")
@@ -52,3 +68,4 @@ class AgentManifest(BaseModel):
     message_scheme: Literal["wss", "https"] = "wss"
     whatsapp: WhatsAppConfig | None = None
     profile: ProfileConfig | None = None
+    ui: UiConfig | None = None
