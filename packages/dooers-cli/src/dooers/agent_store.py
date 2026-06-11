@@ -58,3 +58,9 @@ class HTTPCoreAgentStore:
         if r.status_code == 404:
             raise KeyError(agent_id)
         return _record(_data(r))
+
+    def update(self, agent_id: str, patch: dict) -> AgentRecord:
+        r = httpx.patch(
+            f"{self.api}/agents/{agent_id}", headers=self._h(), json=patch, timeout=self._timeout
+        )
+        return _record(_data(r))

@@ -26,3 +26,19 @@ def test_list_by_org():
         200, json={"success": True, "data": [{"agentId": A, "name": "x", "organizationId": "o1"}]}))
     recs = HTTPCoreAgentStore(BASE, "tok").list_by_org("o1")
     assert recs[0].agent_id == A
+
+
+@respx.mock
+def test_update_patches_agent_and_returns_record():
+    data = {"agentId": A, "name": "x", "organizationId": "o1", "ownerUserId": "u1"}
+    route = respx.patch(f"{BASE}/api/v2/agents/{A}").mock(
+        return_value=httpx.Response(200, json={"success": True, "data": data})
+    )
+    patch_body = {"description": "updated", "serverConfig": {"apiMessagesUrl": "wss://host/path"}}
+    rec = HTTPCoreAgentStore(BASE, "tok").update(A, patch_body)
+    assert rec.agent_id == A
+    # Verify the request body was sent correctly
+    import json
+    sent = json.loads(route.calls.last.request.content)
+    assert sent["description"] == "updated"
+    assert sent["serverConfig"]["apiMessagesUrl"] == "wss://host/path"
