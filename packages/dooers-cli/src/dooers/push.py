@@ -10,6 +10,7 @@ from pathlib import Path
 import typer
 
 from dooers import config, ignore
+from dooers.manifest_sync import build_agent_patch
 from dooers.push_client import PushClient, PushClientError
 from dooers.settings import Settings
 from dooers.token_store import TokenStore, is_token_expired
@@ -105,6 +106,20 @@ def push(
         typer.echo("\nAudit: 0 endpoints detected.")
     if resp.status.value == "succeeded" and resp.url:
         typer.echo(f"\nLive at: {resp.url}")
+        if target_env == "prod":
+            try:
+                manifest = config.read_manifest()
+                if manifest is not None:
+                    patch = build_agent_patch(manifest, resp.url)
+                    if patch:
+                        from dooers.agent_store import HTTPCoreAgentStore
+
+                        HTTPCoreAgentStore(settings.core_url, token).update(
+                            manifest.agent_id, patch
+                        )
+                        typer.echo("Synced agent config to core.")
+            except Exception as e:  # noqa: BLE001 — non-fatal: agent is live, sync is best-effort
+                typer.echo(f"Warning: could not sync agent config: {e}", err=True)
     else:
         typer.echo(f"\nStatus: {resp.status.value}")
         if resp.error:

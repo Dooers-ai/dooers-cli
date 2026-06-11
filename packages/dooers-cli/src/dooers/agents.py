@@ -4,7 +4,12 @@ from pathlib import Path
 
 import typer
 from dooers_protocol import PROTOCOL_VERSION
-from dooers_protocol.agents import AgentManifest, CreateAgentRequest
+from dooers_protocol.agents import (
+    AgentManifest,
+    CreateAgentRequest,
+    ProfileConfig,
+    WhatsAppConfig,
+)
 
 from dooers import config
 from dooers.agent_store import AgentStoreError, HTTPCoreAgentStore
@@ -30,6 +35,9 @@ def create(
     ctx: typer.Context,
     name: str = typer.Option(..., help="Display name for the new agent."),
     org: str | None = typer.Option(None, "--org", help="Organization id (else resolved/prompted)."),
+    description: str | None = typer.Option(
+        None, "--description", help="Short description of the agent."
+    ),
 ) -> None:
     store, settings = _store(ctx)
     organization_id = resolve_org_for_cli(settings, org)
@@ -44,10 +52,16 @@ def create(
             agent_id=rec.agent_id,
             name=rec.name,
             organization_id=rec.organization_id or organization_id,
+            description=description or "",
+            message_path="/",
+            message_scheme="wss",
+            whatsapp=WhatsAppConfig(enabled=False, path=None),
+            profile=ProfileConfig(),
         ),
         directory=Path.cwd(),
     )
     typer.echo(f"Created {rec.agent_id}. {config.MANIFEST_FILENAME} written.")
+    typer.echo("Edit dooers.yaml (message_path, whatsapp, profile) then run dooers push.")
 
 
 @app.command(name="list")
