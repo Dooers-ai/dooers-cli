@@ -152,6 +152,13 @@ def test_description_none_not_in_patch():
     assert "description" not in patch
 
 
+def test_description_empty_string_not_in_patch():
+    # Scaffolded-but-unedited description must NOT send null and wipe core's value.
+    m = _manifest(description="")
+    patch = build_agent_patch(m, DEPLOYED)
+    assert "description" not in patch
+
+
 # ---------------------------------------------------------------------------
 # minimal manifest → empty patch
 # ---------------------------------------------------------------------------

@@ -21,8 +21,10 @@ def build_agent_patch(manifest: AgentManifest, deployed_url: str) -> dict:
     host = _host_and_seg(deployed_url)
     patch: dict = {}
 
-    if manifest.description is not None:
-        patch["description"] = manifest.description or None
+    # Only sync a non-empty description. An empty/absent one means "leave as-is"
+    # — never send null, which would wipe a description set elsewhere (e.g. Studio).
+    if manifest.description:
+        patch["description"] = manifest.description
 
     if manifest.message_path:
         path = _norm_path(manifest.message_path)

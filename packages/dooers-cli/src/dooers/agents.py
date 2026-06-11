@@ -52,7 +52,7 @@ def create(
             agent_id=rec.agent_id,
             name=rec.name,
             organization_id=rec.organization_id or organization_id,
-            description=description or "",
+            description=description,
             message_path="/",
             message_scheme="wss",
             whatsapp=WhatsAppConfig(enabled=False, path=None),
