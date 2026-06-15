@@ -77,7 +77,12 @@ class CoreClient:
         try:
             r = httpx.get(f"{self.api}/identity/me", headers=self._headers(), timeout=self._timeout)
             d = _data(r)
-            return WhoamiResponse(user_id=d.get("id", ""), email=d.get("email", ""))
+            # core v2 /identity/me → data.user.{id,email}; tolerate a flat shape too.
+            user = d.get("user", d)
+            return WhoamiResponse(
+                user_id=user.get("id") or user.get("userId") or "",
+                email=user.get("email", ""),
+            )
         except httpx.HTTPError as e:
             raise CoreClientError(f"me failed: {e}") from e
 

@@ -42,6 +42,25 @@ def test_me():
 
 
 @respx.mock
+def test_me_nested_user_shape():
+    # Real core v2 shape: data.user.{id,email} (+ memberships).
+    respx.get(f"{BASE}/api/v2/identity/me").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "user": {"id": "u9", "email": "x@y.z", "name": "X"},
+                    "memberships": [],
+                },
+            },
+        )
+    )
+    me = CoreClient(BASE, token="t").me()
+    assert me.user_id == "u9" and me.email == "x@y.z"
+
+
+@respx.mock
 def test_list_organizations():
     respx.get(f"{BASE}/api/v2/organizations").mock(
         return_value=httpx.Response(
