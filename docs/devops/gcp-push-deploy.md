@@ -22,7 +22,7 @@ dooers-services (serves the CLI)            dooers-agents (agent infra + LB)
 │  runtime SA:             │ ── deploy ───▶ │ Cloud Run: {agent}-{env}               │
 │  dooers-push-runtime     │ ── register ─▶ │ LB: IP → cert → proxy → url-map         │
 └──────────────────────────┘                │ GCS source bucket │ agent-deploy SA     │
-   push.dooers.ai (DNS)                      │   agents.dooers.ai (DNS → LB static IP) │
+   host.dooers.ai (DNS)                      │   agents.dooers.ai (DNS → LB static IP) │
                                              └──────────────────────────────────────┘
        core API (api.dooers.ai) — pre-existing: auth + agent metadata
 ```
@@ -121,10 +121,10 @@ gcloud run deploy dooers-push \
   --image=$IMAGE --region=$REGION --project=$SERVICES \
   --service-account=dooers-push-runtime@$SERVICES.iam.gserviceaccount.com \
   --no-invoker-iam-check \
-  --set-env-vars=GCP_PROJECT_ID=$AGENTS,GCP_REGION=$REGION,BUCKET_NAME=$BUCKET,ARTIFACT_REPO=agents,CORE_API_URL=https://api.dooers.ai,ENVIRONMENT=prod,DOOERS_LB_DOMAIN=agents.dooers.ai,DOOERS_LB_URL_MAP=dooers-agents-url-map,TRUSTED_HOSTS=push.dooers.ai
+  --set-env-vars=GCP_PROJECT_ID=$AGENTS,GCP_REGION=$REGION,BUCKET_NAME=$BUCKET,ARTIFACT_REPO=agents,CORE_API_URL=https://api.dooers.ai,ENVIRONMENT=prod,DOOERS_LB_DOMAIN=agents.dooers.ai,DOOERS_LB_URL_MAP=dooers-agents-url-map,TRUSTED_HOSTS=host.dooers.ai
 ```
 
-Note `GCP_PROJECT_ID=dooers-agents` even though the service runs in `dooers-services` — that is the whole cross-project design. Grab the service URL for now (used until `push.dooers.ai` DNS exists):
+Note `GCP_PROJECT_ID=dooers-agents` even though the service runs in `dooers-services` — that is the whole cross-project design. Grab the service URL for now (used until `host.dooers.ai` DNS exists):
 
 ```bash
 gcloud run services describe dooers-push --region=$REGION --project=$SERVICES \
@@ -182,7 +182,7 @@ dig NS dooers.ai +short
 Records:
 
 1. **`agents.dooers.ai` → A → LB static IP** (created in Phase D / `gcp-lb.md` Step 7).
-2. **`push.dooers.ai` → the push service.** Simplest start: skip this and point the CLI at the `*.run.app` URL via `DOOERS_PUSH_URL`. For the clean hostname, add a **Cloud Run domain mapping** for `push.dooers.ai` (or front it with its own LB), and ensure `push.dooers.ai` is in `TRUSTED_HOSTS`.
+2. **`host.dooers.ai` → the push service.** Simplest start: skip this and point the CLI at the `*.run.app` URL via `DOOERS_PUSH_URL`. For the clean hostname, add a **Cloud Run domain mapping** for `host.dooers.ai` (or front it with its own LB), and ensure `host.dooers.ai` is in `TRUSTED_HOSTS`.
 
 ---
 
@@ -194,7 +194,7 @@ curl -sI https://agents.dooers.ai/anything       # valid cert; 404 from placehol
 
 # Drive the CLI against the new services:
 export DOOERS_CORE_URL=https://api.dooers.ai
-export DOOERS_PUSH_URL=https://push.dooers.ai    # or the run.app URL from Phase B
+export DOOERS_PUSH_URL=https://host.dooers.ai    # or the run.app URL from Phase B
 dooers login usuario.frndvrgs@gmail.com
 dooers agents create --name smoke-test
 dooers push                                      # ~3-5 min
