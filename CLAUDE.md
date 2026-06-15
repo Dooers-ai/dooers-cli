@@ -4,19 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-Monorepo with three sibling packages under `packages/`:
+Monorepo with two sibling packages under `packages/`:
 
 - `dooers-cli/` — published as `dooers` on PyPI. Typer-based CLI installed by agent creators (`pip install dooers`). Commands: `dooers login`, `dooers logout`, `dooers whoami`, `dooers agents list|create|show`, `dooers push`.
-- `dooers-push/` — Cloud Run service that owns the push pipeline (auditor → provisioner → deployer). Not published to PyPI; deployed from source.
 - `dooers-protocol/` — published as `dooers-protocol` on PyPI. Shared Pydantic models defining the wire contract between any client and `dooers-push`. Both `dooers-cli` and `dooers-push` import from it.
 
-`dooers-cli` and `dooers-push` reference `dooers-protocol` via `tool.uv.sources` with editable path (`path = "../dooers-protocol"`). If `uv sync` fails resolving `dooers-protocol`, run it from `packages/dooers-protocol/` first or check the sibling path.
+The push service (`dooers-push`) lives in its own private repo (`Dooers-ai/dooers-push`), split out of this monorepo. It consumes `dooers-protocol` from PyPI rather than the editable sibling.
+
+`dooers-cli` references `dooers-protocol` via `tool.uv.sources` with editable path (`path = "../dooers-protocol"`). If `uv sync` fails resolving `dooers-protocol`, run it from `packages/dooers-protocol/` first or check the sibling path.
 
 ## Common commands
 
 Each package is independent — `cd packages/<pkg>` first. There is no top-level orchestrator.
 
-### Python packages (all three)
+### Python packages (both)
 
 All packages use `uv` + `poethepoet`. Tasks are defined in each `pyproject.toml` under `[tool.poe.tasks]`.
 
@@ -51,8 +52,7 @@ Before changing anything non-trivial, read:
 
 ## Environment
 
-- Python 3.12+ for `dooers-push` and `dooers-protocol`.
-- Python 3.10+ for `dooers-cli` (broader compat for end users).
+- Python 3.10+ for `dooers-cli` and `dooers-protocol` (broader compat for end users).
 - `uv` for dependency management.
 - `ruff` for lint/format.
 - `mypy` for typechecking.

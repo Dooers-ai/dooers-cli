@@ -1,10 +1,11 @@
 # dooers/dooers-cli
 
-The Dooers creator-facing CLI and the push service it talks to. Monorepo with three sibling packages under `packages/`:
+The Dooers creator-facing CLI and the shared wire protocol it speaks. Monorepo with two sibling packages under `packages/`:
 
 - **`dooers-cli/`** — `dooers` on PyPI. The Typer-based CLI that creators install (`pip install dooers`).
-- **`dooers-push/`** — the Cloud Run service that owns the push pipeline (auditor → provisioner → deployer).
 - **`dooers-protocol/`** — `dooers-protocol` on PyPI. Shared Pydantic models defining the wire contract between any client and `dooers-push`.
+
+The push service (`dooers-push`) — the Cloud Run service that owns the push pipeline (auditor → provisioner → deployer) — lives in its own private repo (`Dooers-ai/dooers-push`) and consumes `dooers-protocol` from PyPI.
 
 ## Design docs
 
