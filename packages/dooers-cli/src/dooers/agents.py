@@ -70,7 +70,11 @@ def create(
 def list_agents(ctx: typer.Context, org: str | None = typer.Option(None, "--org")) -> None:
     store, settings = _store(ctx)
     organization_id = resolve_org_for_cli(settings, org)
-    records = store.list_by_org(organization_id)
+    try:
+        records = store.list_by_org(organization_id)
+    except AgentStoreError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1) from e
     if not records:
         typer.echo("No agents yet. Try `dooers agents create --name my-agent`.")
         return
@@ -87,6 +91,9 @@ def show(ctx: typer.Context, agent_id: str = typer.Argument(...)) -> None:
     except KeyError:
         typer.echo(f"Agent {agent_id} not found.", err=True)
         raise typer.Exit(code=1)
+    except AgentStoreError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1) from e
     typer.echo(f"ID:    {r.agent_id}")
     typer.echo(f"Name:  {r.name}")
     typer.echo(f"Org:   {r.organization_id}")
