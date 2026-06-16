@@ -1,6 +1,6 @@
 [project]
 name = "dooers"
-version = "0.3.0"
+version = "0.4.0"
 description = "Dooers CLI — push agents to Dooers, manage agent records, authenticate from the terminal"
 readme = "README.md"
 license = "MIT"
@@ -26,7 +26,7 @@ dependencies = [
     "pydantic>=2.13.2",
     "pyyaml>=6.0.2",
     "tqdm>=4.66.4",
-    "dooers-protocol>=0.1.0",
+    "dooers-protocol>=0.2.0",
 ]
 
 [tool.uv.sources]
