@@ -163,3 +163,25 @@ def test_manifest_message_scheme_invalid_rejected():
             organization_id="o",
             message_scheme="ws",  # type: ignore[arg-type]
         )
+
+
+def test_manifest_hosting_defaults_true():
+    m = AgentManifest(
+        protocol_version="2", agent_id="a1", name="A", organization_id="o1"
+    )
+    assert m.hosting is True
+    # Round-trips through the dumped dict written to dooers.yaml.
+    assert m.model_dump(mode="json")["hosting"] is True
+
+
+def test_manifest_hosting_can_be_disabled():
+    m = AgentManifest.model_validate(
+        {
+            "protocol_version": "2",
+            "agent_id": "a1",
+            "name": "A",
+            "organization_id": "o1",
+            "hosting": False,
+        }
+    )
+    assert m.hosting is False
