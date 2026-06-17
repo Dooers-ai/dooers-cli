@@ -57,8 +57,8 @@ def push(
     target_env = env or settings.env
 
     # Resolve agent_id from arg or manifest.
+    manifest = config.read_manifest()
     if agent_id is None:
-        manifest = config.read_manifest()
         if manifest is None:
             typer.echo(
                 f"Missing {config.MANIFEST_FILENAME}. Run `dooers agents create` first "
@@ -67,6 +67,16 @@ def push(
             )
             raise typer.Exit(code=1)
         agent_id = manifest.agent_id
+
+    # Client-side hosting guard. The dooers-push server is the authoritative
+    # gate (it checks the org's hosting plan feature); this is a fast local
+    # check so `hosting: false` in dooers.yaml never even uploads.
+    if manifest is not None and not manifest.hosting:
+        typer.echo(
+            "hosting is disabled in dooers.yaml (hosting: false). Aborting push.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
     # Auth.
     store = TokenStore()

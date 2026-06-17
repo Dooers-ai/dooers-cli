@@ -66,6 +66,10 @@ class AgentManifest(BaseModel):
     # Combined with the deployed host → serverConfig.apiMessagesUrl.
     message_path: str | None = None
     message_scheme: Literal["wss", "https"] = "wss"
+    # Opt into Dooers managed hosting. The org's `hosting` plan feature is the
+    # authoritative gate (enforced by dooers-push); this is declarative + a
+    # fast client-side guard in `dooers push`.
+    hosting: bool = True
     whatsapp: WhatsAppConfig | None = None
     profile: ProfileConfig | None = None
     ui: UiConfig | None = None
