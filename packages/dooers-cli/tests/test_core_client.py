@@ -3,7 +3,7 @@ import httpx
 import pytest
 import respx
 
-from dooers.core_client import CoreClient, CoreClientError
+from dooers.cli.core_client import CoreClient, CoreClientError
 
 BASE = "https://core.test"
 

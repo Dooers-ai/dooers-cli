@@ -8,13 +8,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 import typer
-from dooers_protocol.push import format_push_failure
+from dooers.protocol.push import format_push_failure
 
-from dooers import config, ignore
-from dooers.manifest_sync import build_agent_patch
-from dooers.push_client import PushClient, PushClientError
-from dooers.settings import Settings
-from dooers.token_store import TokenStore, is_token_expired
+from dooers.cli import config, ignore
+from dooers.cli.manifest_sync import build_agent_patch
+from dooers.cli.push_client import PushClient, PushClientError
+from dooers.cli.settings import Settings
+from dooers.cli.token_store import TokenStore, is_token_expired
 
 
 def _spinner(message: str) -> Callable[[], None]:
@@ -123,7 +123,7 @@ def push(
                 if manifest is not None:
                     patch = build_agent_patch(manifest, resp.url)
                     if patch:
-                        from dooers.agent_store import HTTPCoreAgentStore
+                        from dooers.cli.agent_store import HTTPCoreAgentStore
 
                         HTTPCoreAgentStore(settings.core_url, token).update(
                             manifest.agent_id, patch

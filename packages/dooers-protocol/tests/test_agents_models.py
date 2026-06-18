@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from dooers_protocol.agents import (
+from dooers.protocol.agents import (
     AgentManifest,
     AgentRecord,
     CreateAgentRequest,

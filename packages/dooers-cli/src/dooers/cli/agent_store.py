@@ -3,7 +3,7 @@
 import json
 
 import httpx
-from dooers_protocol.agents import AgentRecord, CreateAgentRequest
+from dooers.protocol.agents import AgentRecord, CreateAgentRequest
 
 
 class AgentStoreError(RuntimeError):

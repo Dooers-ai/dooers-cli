@@ -15,6 +15,6 @@ Shared Pydantic models defining the wire contract between any Dooers client (`do
 ## Use
 
 ```python
-from dooers_protocol import PROTOCOL_VERSION
-from dooers_protocol.push import PushResponse, BuildStatus
+from dooers.protocol import PROTOCOL_VERSION
+from dooers.protocol.push import PushResponse, BuildStatus
 ```

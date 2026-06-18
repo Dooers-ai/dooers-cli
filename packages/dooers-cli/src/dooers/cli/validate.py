@@ -9,11 +9,16 @@ from pathlib import Path
 import typer
 from pydantic import ValidationError
 
-from dooers.config import MANIFEST_FILENAME, read_manifest
+from dooers.cli.config import MANIFEST_FILENAME, read_manifest
 
-_LEGACY_SDK_DEP = re.compile(r"dooers-agents-server")
+_LEGACY_SDK_DEP = re.compile(r"dooers-agents(?!-server|-client)")
 _LEGACY_IMPORT = re.compile(
-    r"^\s*(?:from dooers(?:\.|\s+import)|import dooers(?:\s|$))",
+    r"^\s*(?:"
+    r"from dooers_agents(?:\.|\s+import)|"
+    r"from dooers import|"
+    r"import dooers_agents(?:\s|$)|"
+    r"import dooers(?:\s|$)"
+    r")",
     re.MULTILINE,
 )
 
@@ -56,15 +61,15 @@ def collect_issues(root: Path | None = None) -> list[ValidationIssue]:
             issues.append(
                 ValidationIssue(
                     "error",
-                    "pyproject.toml still depends on `dooers-agents-server` — "
-                    "rename to `dooers-agents>=0.11.0` (SDK import is now `dooers_agents`)",
+                    "pyproject.toml still depends on legacy `dooers-agents` — "
+                    "use `dooers-agents-server` with `from dooers.agents.server import ...`",
                 )
             )
-        elif "dooers-agents" not in text:
+        elif "dooers-agents-server" not in text:
             issues.append(
                 ValidationIssue(
                     "warning",
-                    "pyproject.toml has no `dooers-agents` dependency — "
+                    "pyproject.toml has no `dooers-agents-server` dependency — "
                     "agent projects usually depend on the SDK",
                 )
             )
@@ -83,8 +88,8 @@ def collect_issues(root: Path | None = None) -> list[ValidationIssue]:
             issues.append(
                 ValidationIssue(
                     "error",
-                    f"{rel} uses legacy `dooers` imports — "
-                    "update to `from dooers_agents import ...`",
+                    f"{rel} uses legacy SDK imports — "
+                    "update to `from dooers.agents.server import ...`",
                 )
             )
 

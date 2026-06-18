@@ -3,10 +3,10 @@
 from pathlib import Path
 
 import pytest
-from dooers_protocol import PROTOCOL_VERSION
-from dooers_protocol.agents import AgentManifest
+from dooers.protocol import PROTOCOL_VERSION
+from dooers.protocol.agents import AgentManifest
 
-from dooers.config import MANIFEST_FILENAME, read_manifest, write_manifest
+from dooers.cli.config import MANIFEST_FILENAME, read_manifest, write_manifest
 
 
 def test_write_then_read_roundtrip(tmp_path: Path) -> None:

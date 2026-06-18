@@ -2,11 +2,11 @@
 
 from datetime import datetime, timezone
 
-from dooers_protocol import PROTOCOL_VERSION
-from dooers_protocol.agents import AgentManifest, AgentRecord, CreateAgentRequest
-from dooers_protocol.audit import AuditReport, InfraManifest
-from dooers_protocol.errors import ErrorCode, ErrorEnvelope
-from dooers_protocol.push import BuildStatus, PushResponse
+from dooers.protocol import PROTOCOL_VERSION
+from dooers.protocol.agents import AgentManifest, AgentRecord, CreateAgentRequest
+from dooers.protocol.audit import AuditReport, InfraManifest
+from dooers.protocol.errors import ErrorCode, ErrorEnvelope
+from dooers.protocol.push import BuildStatus, PushResponse
 
 
 def test_protocol_version_exported() -> None:

@@ -1,6 +1,6 @@
 """Push failure display tests."""
 
-from dooers_protocol.push import BuildStatus, PushResponse, format_push_failure
+from dooers.protocol.push import BuildStatus, PushResponse, format_push_failure
 
 
 def test_format_push_failure_includes_step_and_logs() -> None:

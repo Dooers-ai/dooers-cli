@@ -4,10 +4,10 @@ from collections.abc import Callable
 
 import typer
 
-from dooers.core_client import CoreClient, CoreClientError
-from dooers.settings import Settings
-from dooers.token_store import TokenStore, is_token_expired
-from dooers.user_config import UserConfig
+from dooers.cli.core_client import CoreClient, CoreClientError
+from dooers.cli.settings import Settings
+from dooers.cli.token_store import TokenStore, is_token_expired
+from dooers.cli.user_config import UserConfig
 
 app = typer.Typer(no_args_is_help=True)
 

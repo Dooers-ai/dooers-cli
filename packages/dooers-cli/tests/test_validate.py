@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from dooers.validate import collect_issues
+from dooers.cli.validate import collect_issues
 
 
 def _write(path: Path, content: str) -> None:
@@ -25,11 +25,11 @@ hosting: true
     _write(tmp_path / "Dockerfile", "FROM python:3.12-slim\n")
     _write(
         tmp_path / "pyproject.toml",
-        '[project]\ndependencies = ["dooers-agents>=0.11.0"]\n',
+        '[project]\ndependencies = ["dooers-agents-server>=0.12.0"]\n',
     )
     _write(
         tmp_path / "src" / "main.py",
-        "from dooers_agents import AgentServer\n",
+        "from dooers.agents.server import AgentServer\n",
     )
 
     issues = collect_issues(tmp_path)
@@ -50,11 +50,11 @@ organization_id: "org_1"
     _write(tmp_path / "Dockerfile", "FROM python:3.12-slim\n")
     _write(
         tmp_path / "pyproject.toml",
-        'dependencies = ["dooers-agents-server>=0.10.2"]\n',
+        'dependencies = ["dooers-agents>=0.11.0"]\n',
     )
 
     issues = collect_issues(tmp_path)
-    assert any("dooers-agents-server" in i.message for i in issues)
+    assert any("legacy `dooers-agents`" in i.message for i in issues)
 
 
 def test_validate_flags_legacy_imports(tmp_path: Path) -> None:
@@ -71,7 +71,7 @@ organization_id: "org_1"
     _write(tmp_path / "Dockerfile", "FROM python:3.12-slim\n")
     _write(
         tmp_path / "pyproject.toml",
-        'dependencies = ["dooers-agents>=0.11.0"]\n',
+        'dependencies = ["dooers-agents-server>=0.12.0"]\n',
     )
     _write(
         tmp_path / "src" / "agent.py",
@@ -79,4 +79,4 @@ organization_id: "org_1"
     )
 
     issues = collect_issues(tmp_path)
-    assert any("legacy `dooers` imports" in i.message for i in issues)
+    assert any("legacy SDK imports" in i.message for i in issues)

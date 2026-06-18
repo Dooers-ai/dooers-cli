@@ -1,9 +1,9 @@
 # packages/dooers-cli/tests/test_agent_store.py
 import httpx
 import respx
-from dooers_protocol.agents import CreateAgentRequest
+from dooers.protocol.agents import CreateAgentRequest
 
-from dooers.agent_store import HTTPCoreAgentStore
+from dooers.cli.agent_store import HTTPCoreAgentStore
 
 BASE = "https://core.test"
 A = "550e8400-e29b-41d4-a716-446655440000"

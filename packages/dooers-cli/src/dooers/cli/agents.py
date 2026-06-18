@@ -3,8 +3,8 @@
 from pathlib import Path
 
 import typer
-from dooers_protocol import PROTOCOL_VERSION
-from dooers_protocol.agents import (
+from dooers.protocol import PROTOCOL_VERSION
+from dooers.protocol.agents import (
     AgentManifest,
     CreateAgentRequest,
     ProfileConfig,
@@ -12,11 +12,11 @@ from dooers_protocol.agents import (
     WhatsAppConfig,
 )
 
-from dooers import config
-from dooers.agent_store import AgentStoreError, HTTPCoreAgentStore
-from dooers.org import resolve_org_for_cli
-from dooers.settings import Settings
-from dooers.token_store import TokenStore, is_token_expired
+from dooers.cli import config
+from dooers.cli.agent_store import AgentStoreError, HTTPCoreAgentStore
+from dooers.cli.org import resolve_org_for_cli
+from dooers.cli.settings import Settings
+from dooers.cli.token_store import TokenStore, is_token_expired
 
 app = typer.Typer(no_args_is_help=True)
 

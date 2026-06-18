@@ -3,7 +3,7 @@
 import time
 from pathlib import Path
 
-from dooers.token_store import TokenStore, is_token_expired
+from dooers.cli.token_store import TokenStore, is_token_expired
 
 
 def test_roundtrip_with_expiry(tmp_path: Path):

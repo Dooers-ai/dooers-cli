@@ -6,11 +6,11 @@ from types import SimpleNamespace
 import pytest
 import typer
 import yaml
-from dooers_protocol import PROTOCOL_VERSION
-from dooers_protocol.agents import AgentManifest
+from dooers.protocol import PROTOCOL_VERSION
+from dooers.protocol.agents import AgentManifest
 
-from dooers import config
-from dooers.push import push
+from dooers.cli import config
+from dooers.cli.push import push
 
 
 def _write_manifest(directory: Path, *, hosting: bool) -> None:

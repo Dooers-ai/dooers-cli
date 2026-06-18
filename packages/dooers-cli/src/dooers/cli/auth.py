@@ -5,9 +5,9 @@ Registered as top-level commands from cli.py.
 
 import typer
 
-from dooers.core_client import CoreClient, CoreClientError
-from dooers.settings import Settings
-from dooers.token_store import TokenStore, is_token_expired
+from dooers.cli.core_client import CoreClient, CoreClientError
+from dooers.cli.settings import Settings
+from dooers.cli.token_store import TokenStore, is_token_expired
 
 
 def _settings(ctx: typer.Context) -> Settings:

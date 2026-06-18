@@ -3,7 +3,7 @@
 import tarfile
 from pathlib import Path
 
-from dooers.ignore import (
+from dooers.cli.ignore import (
     DEFAULT_IGNORE_PATTERNS,
     is_ignored,
     load_ignore_patterns,

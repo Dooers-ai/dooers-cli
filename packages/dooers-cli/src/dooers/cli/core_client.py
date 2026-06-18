@@ -3,7 +3,7 @@
 import time
 
 import httpx
-from dooers_protocol.auth import WhoamiResponse
+from dooers.protocol.auth import WhoamiResponse
 
 ACCESS_TOKEN_FALLBACK_TTL = 60 * 60 * 24 * 7  # 7d if core doesn't tell us
 

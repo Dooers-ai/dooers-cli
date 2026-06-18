@@ -4,7 +4,7 @@ from enum import Enum
 
 from pydantic import BaseModel
 
-from dooers_protocol.audit import AuditReport
+from dooers.protocol.audit import AuditReport
 
 
 class BuildStatus(str, Enum):

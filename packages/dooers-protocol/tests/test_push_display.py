@@ -1,6 +1,6 @@
 """Tests for push failure display helpers shared with the CLI."""
 
-from dooers_protocol.push import BuildStatus, PushResponse, format_push_failure
+from dooers.protocol.push import BuildStatus, PushResponse, format_push_failure
 
 
 def test_format_push_failure_includes_step_error_and_logs() -> None:

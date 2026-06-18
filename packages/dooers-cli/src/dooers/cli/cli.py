@@ -2,8 +2,8 @@
 
 import typer
 
-from dooers import agents, auth, org, push, validate
-from dooers.settings import Settings
+from . import agents, auth, org, push, validate
+from .settings import Settings
 
 app = typer.Typer(
     name="dooers",

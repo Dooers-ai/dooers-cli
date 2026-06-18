@@ -1,6 +1,6 @@
 """TDD tests for manifest_sync.build_agent_patch."""
 
-from dooers_protocol.agents import (
+from dooers.protocol.agents import (
     AgentManifest,
     ProfileConfig,
     SuggestedPrompt,
@@ -8,7 +8,7 @@ from dooers_protocol.agents import (
     WhatsAppConfig,
 )
 
-from dooers.manifest_sync import build_agent_patch
+from dooers.cli.manifest_sync import build_agent_patch
 
 # Shared base manifest (minimal required fields).
 _BASE = dict(

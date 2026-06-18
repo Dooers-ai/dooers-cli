@@ -1,6 +1,6 @@
 """Build the core PATCH body from a manifest + the deployed URL."""
 
-from dooers_protocol.agents import AgentManifest
+from dooers.protocol.agents import AgentManifest
 
 
 def _host_and_seg(deployed_url: str) -> str:

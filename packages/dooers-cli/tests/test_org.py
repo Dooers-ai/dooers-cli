@@ -1,5 +1,5 @@
 # packages/dooers-cli/tests/test_org.py
-from dooers.org import resolve_org
+from dooers.cli.org import resolve_org
 
 ORGS = [{"organizationId": "o1", "name": "A"}, {"organizationId": "o2", "name": "B"}]
 
