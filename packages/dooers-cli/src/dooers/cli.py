@@ -2,7 +2,7 @@
 
 import typer
 
-from dooers import agents, auth, org, push
+from dooers import agents, auth, org, push, validate
 from dooers.settings import Settings
 
 app = typer.Typer(
@@ -29,6 +29,10 @@ app.command(name="whoami", help="Show the currently authenticated user.")(auth.w
 app.command(name="logout", help="Clear local credentials.")(auth.logout)
 app.add_typer(agents.app, name="agents", help="Manage agents — subcommands: list | create | show.")
 app.add_typer(org.app, name="org", help="Manage organization — subcommands: list | use.")
+app.command(
+    name="validate",
+    help="Validate dooers.yaml, Dockerfile, and SDK dependency/import conventions.",
+)(validate.validate)
 app.command(name="push", help="Archive cwd and push it as a new build of an agent.")(push.push)
 
 

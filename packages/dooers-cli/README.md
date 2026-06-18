@@ -20,6 +20,7 @@ dooers agents create --name my-agent
 dooers agents show ag_8h2k
 
 # push (reads dooers.yaml in cwd unless agent_id given)
+dooers validate
 dooers push [<agent_id>] [--tag latest] [--env prod|stg|dev]
 ```
 
