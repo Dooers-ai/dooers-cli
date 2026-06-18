@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import typer
+from dooers_protocol.push import format_push_failure
 
 from dooers import config, ignore
 from dooers.manifest_sync import build_agent_patch
@@ -130,10 +131,9 @@ def push(
                         typer.echo("Synced agent config to core.")
             except Exception as e:  # noqa: BLE001 — non-fatal: agent is live, sync is best-effort
                 typer.echo(f"Warning: could not sync agent config: {e}", err=True)
+    elif resp.status.value == "failed":
+        typer.echo(f"\n{format_push_failure(resp)}", err=True)
+        raise typer.Exit(code=1)
     else:
         typer.echo(f"\nStatus: {resp.status.value}")
-        if resp.error:
-            typer.echo(f"Error: {resp.error}", err=True)
-        if resp.build_id:
-            typer.echo(f"Build ID: {resp.build_id}")
-        raise typer.Exit(code=1 if resp.status.value == "failed" else 0)
+        raise typer.Exit(code=0)
