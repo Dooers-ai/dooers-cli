@@ -13,6 +13,8 @@ from pathlib import Path
 DEFAULT_IGNORE_PATTERNS: list[str] = [
     ".git/",
     ".gitignore",
+    ".env",
+    ".env.*",
     ".venv/",
     "venv/",
     "node_modules/",

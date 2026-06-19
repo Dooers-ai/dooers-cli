@@ -41,8 +41,6 @@ def format_push_failure(response: PushResponse) -> str:
         lines.append(f"Failed during: {response.failed_step}")
     if response.error:
         lines.append(response.error)
-    if response.build_log_url:
-        lines.append(f"Build logs: {response.build_log_url}")
-    elif response.build_id:
-        lines.append(f"Build ID: {response.build_id}")
+    if response.build_id:
+        lines.append(f"Reference: build {response.build_id}")
     return "\n".join(lines)

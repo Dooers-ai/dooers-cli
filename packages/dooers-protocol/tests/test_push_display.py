@@ -19,4 +19,5 @@ def test_format_push_failure_includes_step_error_and_logs() -> None:
     assert "Deployment failed" in text
     assert "Failed during: deploy to Cloud Run" in text
     assert "metadata.labels" in text
-    assert "Build logs:" in text
+    assert "Reference: build build-123" in text
+    assert "Build logs:" not in text
