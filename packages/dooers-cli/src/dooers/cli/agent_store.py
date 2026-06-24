@@ -26,6 +26,7 @@ def _record(d: dict) -> AgentRecord:
         owner_user_id=d.get("ownerUserId"),
         organization_id=d.get("organizationId"),
         host_url=d.get("hostUrl"),
+        status=d.get("status"),
     )
 
 
@@ -64,3 +65,15 @@ class HTTPCoreAgentStore:
             f"{self.api}/agents/{agent_id}", headers=self._h(), json=patch, timeout=self._timeout
         )
         return _record(_data(r))
+
+    def archive(self, agent_id: str) -> None:
+        r = httpx.post(
+            f"{self.api}/agents/{agent_id}/archive", headers=self._h(), timeout=self._timeout
+        )
+        _data(r)  # raises AgentStoreError on {success: false}; no record to parse
+
+    def delete(self, agent_id: str) -> None:
+        r = httpx.delete(
+            f"{self.api}/agents/{agent_id}", headers=self._h(), timeout=self._timeout
+        )
+        _data(r)  # success body is {success, message} with no data key — do NOT call _record()
