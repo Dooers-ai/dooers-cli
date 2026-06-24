@@ -12,6 +12,7 @@ class AgentRecord(BaseModel):
     owner_user_id: str | None = None
     organization_id: str | None = None
     host_url: str | None = None
+    status: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
