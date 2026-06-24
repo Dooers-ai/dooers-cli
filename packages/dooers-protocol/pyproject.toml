@@ -46,6 +46,10 @@ select = ["E", "F", "I", "UP"]
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.mypy]
+mypy_path = "src"
+explicit_package_bases = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
@@ -53,7 +57,7 @@ testpaths = ["tests"]
 format = "ruff format ."
 check = "ruff check ."
 "check:fix" = "ruff check --fix ."
-typecheck = "mypy src/dooers.protocol"
+typecheck = "mypy -p dooers.protocol"
 test = "pytest"
 "test:cov" = "pytest --cov=src --cov-report=term-missing"
 dev = ["check", "typecheck", "test"]
