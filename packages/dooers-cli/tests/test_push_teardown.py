@@ -28,6 +28,7 @@ def test_teardown_parses_response():
     assert isinstance(resp, TeardownResponse)
     assert resp.service_deleted is True
     assert resp.lb_rule_removed is False
+    assert respx.calls.last.request.url.params["env"] == "prod"
 
 
 @respx.mock
