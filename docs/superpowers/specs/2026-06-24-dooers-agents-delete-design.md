@@ -96,7 +96,7 @@ LB rule) is already absent, reporting exactly what it removed.
    half-deleted state of tearing down infra and *then* failing core's delete guard.
 3. **Confirmation prompt** (unless `--yes`/`-y`): shows `name` + `id` + an irreversibility
    warning ("This deletes the agent record and tears down its deployed service. This cannot
-   be undone."). Declining exits 0 without changes.
+   be undone."). Declining aborts via `typer.Abort` (exit 1) without changes.
 4. **Archive (only if `status == 'active'` and `--archive`):** `POST /api/v2/agents/{id}/archive`
    (core). On failure → abort, surface message, exit 1.
 5. **Teardown:** `DELETE /v1/agents/{id}?env=<env>` (push). On failure → **abort before the
