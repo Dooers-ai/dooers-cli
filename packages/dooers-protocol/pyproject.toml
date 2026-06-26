@@ -1,6 +1,6 @@
 [project]
 name = "dooers-protocol"
-version = "0.6.0"
+version = "0.7.0"
 description = "Dooers — wire protocol shared between CLI and dooers-push service"
 readme = "README.md"
 license = "MIT"
