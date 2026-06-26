@@ -102,6 +102,11 @@ git commit -m "feat(protocol): add org_not_provisioned error code"
 
 All Phase B paths are in the **`dooers-push` repo root** (sibling of `dooers-cli`). Run `uv sync --extra dev` once at the start.
 
+> **Codebase convergence update (main `7dc9283`).** Two recently-merged commits move the codebase toward this design; adjust the tasks below accordingly:
+> - **`a064b5e` (harden env injection)** rewrote the in-build deploy to write env vars to a JSON file and **stopped merging local `.env`** — only `env.<env>` (e.g. `env.prod`) is read now. **Correctness requirement:** `env_files.parse_env_archive` (Task B2) and `parse_env_from_gcs` (Task B7) MUST parse **only `env.<env>`**, NOT `.env`. Re-introducing the `.env` merge would regress a deliberate security hardening. Update Task B2's signature to `parse_env_archive(archive_path, env) -> dict` reading just `env.<env>`, and drop the `.env`/"later wins" test cases (keep the comment-stripping + zip/tar cases).
+> - **`c9ffd21` (teardown endpoint)** already **created `src/dooers_push/gcp/cloudrun.py`** (with an async `delete_service` using `run_v2.ServicesAsyncClient`) and already **added `google-cloud-run`** (installed: 0.16.1, `invoker_iam_disabled` confirmed present). Therefore: **Task B3 is already satisfied** (verify-only, no dep edit). **Task B5 EXTENDS the existing `cloudrun.py`** rather than creating it — add `build_image_ref` + an **async** `deploy_service(...)` using `run_v2.ServicesAsyncClient` (mirror `delete_service`'s style/imports). Consequently Task B7 calls `await deploy_service(...)`.
+> - The teardown `DELETE /v1/agents/{agent_id}` deletes the Cloud Run service via the control plane (`run.developer`, granted in Phase D2) — no tenant-SA change needed, but it benefits from the same grant; no extra work.
+
 ### Task B1: `tenancy.py` — org id → resource names (pure)
 
 **Files:**
