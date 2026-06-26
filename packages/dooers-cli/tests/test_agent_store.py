@@ -1,9 +1,10 @@
 # packages/dooers-cli/tests/test_agent_store.py
 import httpx
+import pytest
 import respx
 from dooers.protocol.agents import CreateAgentRequest
 
-from dooers.cli.agent_store import HTTPCoreAgentStore
+from dooers.cli.agent_store import AgentStoreError, HTTPCoreAgentStore
 
 BASE = "https://core.test"
 A = "550e8400-e29b-41d4-a716-446655440000"
@@ -42,3 +43,59 @@ def test_update_patches_agent_and_returns_record():
     sent = json.loads(route.calls.last.request.content)
     assert sent["description"] == "updated"
     assert sent["serverConfig"]["apiMessagesUrl"] == "wss://host/path"
+
+
+@respx.mock
+def test_delete_succeeds_without_data_key():
+    # Core returns {success, message} with NO data key — must not call _record().
+    respx.delete(f"{BASE}/api/v2/agents/{A}").mock(
+        return_value=httpx.Response(200, json={"success": True, "message": "Agent deleted"})
+    )
+    HTTPCoreAgentStore(BASE, "tok").delete(A)  # should not raise
+
+
+@respx.mock
+def test_delete_surfaces_core_error_message():
+    respx.delete(f"{BASE}/api/v2/agents/{A}").mock(
+        return_value=httpx.Response(
+            422, json={"success": False, "error": {"message": "cannot delete active agents"}}
+        )
+    )
+    with pytest.raises(AgentStoreError) as exc:
+        HTTPCoreAgentStore(BASE, "tok").delete(A)
+    assert "cannot delete active agents" in str(exc.value)
+
+
+@respx.mock
+def test_archive_posts_to_archive_route():
+    route = respx.post(f"{BASE}/api/v2/agents/{A}/archive").mock(
+        return_value=httpx.Response(
+            200, json={"success": True, "data": {"agentId": A, "name": "x"}}
+        )
+    )
+    HTTPCoreAgentStore(BASE, "tok").archive(A)  # should not raise
+    assert route.called
+
+
+@respx.mock
+def test_archive_surfaces_core_error_message():
+    respx.post(f"{BASE}/api/v2/agents/{A}/archive").mock(
+        return_value=httpx.Response(
+            422,
+            json={"success": False, "error": {"message": "already archived"}},
+        )
+    )
+    with pytest.raises(AgentStoreError) as exc:
+        HTTPCoreAgentStore(BASE, "tok").archive(A)
+    assert "already archived" in str(exc.value)
+
+
+@respx.mock
+def test_get_populates_status():
+    respx.get(f"{BASE}/api/v2/agents/{A}").mock(
+        return_value=httpx.Response(
+            200, json={"success": True, "data": {"agentId": A, "name": "x", "status": "active"}}
+        )
+    )
+    rec = HTTPCoreAgentStore(BASE, "tok").get(A)
+    assert rec.status == "active"

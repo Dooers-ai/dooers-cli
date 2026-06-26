@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 from dooers.protocol.errors import ErrorEnvelope
 from dooers.protocol.push import PushResponse
+from dooers.protocol.teardown import TeardownResponse
 
 
 class PushClientError(RuntimeError):
@@ -50,3 +51,20 @@ class PushClient:
                 raise PushClientError(f"push failed (HTTP {r.status_code}): {r.text}")
 
         return PushResponse.model_validate(r.json())
+
+    def teardown(self, agent_id: str, env: str = "prod") -> TeardownResponse:
+        url = f"{self.base_url}/v1/agents/{agent_id}"
+        headers = {"Authorization": f"Bearer {self.token}"}
+        try:
+            r = httpx.delete(url, headers=headers, params={"env": env}, timeout=self._timeout)
+        except httpx.HTTPError as e:
+            raise PushClientError(f"teardown request failed: {e}") from e
+
+        if r.status_code >= 400:
+            try:
+                envelope = ErrorEnvelope.model_validate(r.json())
+                raise PushClientError(envelope.message, envelope=envelope)
+            except (ValueError, TypeError):
+                raise PushClientError(f"teardown failed (HTTP {r.status_code}): {r.text}")
+
+        return TeardownResponse.model_validate(r.json())
