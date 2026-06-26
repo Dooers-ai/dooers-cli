@@ -15,6 +15,7 @@ from dooers.protocol.teardown import format_teardown_result
 
 from dooers.cli import config
 from dooers.cli.agent_store import AgentStoreError, HTTPCoreAgentStore
+from dooers.cli.env_prod import upsert_agent_seed_secret
 from dooers.cli.org import resolve_org_for_cli
 from dooers.cli.push_client import PushClient, PushClientError
 from dooers.cli.settings import Settings
@@ -65,7 +66,38 @@ def create(
         directory=Path.cwd(),
     )
     typer.echo(f"Created {rec.agent_id}. {config.MANIFEST_FILENAME} written.")
+    if rec.runtime_api_key:
+        env_path = upsert_agent_seed_secret(Path.cwd(), rec.runtime_api_key)
+        typer.echo(f"Wrote AGENT_SEED_SECRET to {env_path.name} (shown once — store it safely).")
+    else:
+        typer.echo(
+            "Warning: core did not return a runtime API key. "
+            "Set Agent access key in Studio and AGENT_SEED_SECRET in env.prod before push.",
+            err=True,
+        )
     typer.echo("Edit dooers.yaml (message_path, whatsapp, profile) then run dooers push.")
+
+
+@app.command("rotate-key")
+def rotate_key(
+    ctx: typer.Context,
+    agent_id: str = typer.Argument(..., help="Agent id to rotate the runtime API key for."),
+) -> None:
+    store, _, _ = _store(ctx)
+    try:
+        rec = store.regenerate_runtime_api_key(agent_id)
+    except AgentStoreError as e:
+        typer.echo(f"rotate-key failed: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    if rec.runtime_api_key:
+        env_path = upsert_agent_seed_secret(Path.cwd(), rec.runtime_api_key)
+        typer.echo(f"Wrote AGENT_SEED_SECRET to {env_path.name} (shown once — store it safely).")
+    else:
+        typer.echo(
+            "Warning: core did not return a runtime API key. Check Studio for the new key.",
+            err=True,
+        )
+    typer.echo("Run dooers push to deploy the updated secret to your agent host.")
 
 
 @app.command(name="list")

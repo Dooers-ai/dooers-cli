@@ -41,6 +41,7 @@ def _record(d: dict) -> AgentRecord:
         organization_id=d.get("organizationId"),
         host_url=d.get("hostUrl"),
         status=d.get("status"),
+        runtime_api_key=d.get("runtimeApiKey"),
     )
 
 
@@ -91,3 +92,11 @@ class HTTPCoreAgentStore:
             f"{self.api}/agents/{agent_id}", headers=self._h(), timeout=self._timeout
         )
         _data(r)  # success body is {success, message} with no data key — do NOT call _record()
+
+    def regenerate_runtime_api_key(self, agent_id: str) -> AgentRecord:
+        r = httpx.post(
+            f"{self.api}/agents/{agent_id}/runtime-api-key/regenerate",
+            headers=self._h(),
+            timeout=self._timeout,
+        )
+        return _record(_data(r))

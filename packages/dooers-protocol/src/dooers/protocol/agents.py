@@ -15,6 +15,8 @@ class AgentRecord(BaseModel):
     status: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    #: Present only on POST /agents create — set as AGENT_SEED_SECRET on the agent host.
+    runtime_api_key: str | None = None
 
 
 class CreateAgentRequest(BaseModel):
