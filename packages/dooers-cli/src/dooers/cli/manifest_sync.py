@@ -15,11 +15,16 @@ def _norm_path(p: str) -> str:
 def build_agent_patch(manifest: AgentManifest, deployed_url: str) -> dict:
     """Map the declarative manifest to a core v2 PATCH /agents/:id body.
 
-    Derives serverConfig.apiMessagesUrl (and whatsapp inbound) from the
-    deployed host + the declared paths. Only includes keys the creator set.
+    Records the deployed URL as ``hostUrl`` and derives
+    serverConfig.apiMessagesUrl (and whatsapp inbound) from the deployed host +
+    the declared paths. Only includes keys the creator set.
+
+    The CLI writes ``hostUrl`` here (with the creator's token) because the async
+    push completion runs in a Pub/Sub webhook that has no core credentials, so
+    dooers-push can no longer write it back itself.
     """
     host = _host_and_seg(deployed_url)
-    patch: dict = {}
+    patch: dict = {"hostUrl": deployed_url}
 
     # Only sync a non-empty description. An empty/absent one means "leave as-is"
     # — never send null, which would wipe a description set elsewhere (e.g. Studio).
