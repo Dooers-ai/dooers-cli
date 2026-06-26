@@ -1,6 +1,6 @@
 [project]
 name = "dooers-cli"
-version = "0.5.0"
+version = "0.7.1"
 description = "Dooers CLI — push agents to Dooers, manage agent records, authenticate from the terminal"
 readme = "README.md"
 license = "MIT"
@@ -26,7 +26,7 @@ dependencies = [
     "pydantic>=2.13.2",
     "pyyaml>=6.0.2",
     "tqdm>=4.66.4",
-    "dooers-protocol>=0.4.0",
+    "dooers-protocol>=0.6.0",
 ]
 
 [tool.uv.sources]
@@ -68,6 +68,10 @@ select = ["E", "F", "I", "UP", "BLE"]
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.mypy]
+mypy_path = "src"
+explicit_package_bases = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
@@ -76,7 +80,7 @@ format = "ruff format ."
 "format:imports" = "ruff check --select I --fix ."
 check = "ruff check ."
 "check:fix" = "ruff check --fix ."
-typecheck = "mypy src/dooers/cli"
+typecheck = "mypy -p dooers.cli"
 test = "pytest"
 "test:cov" = "pytest --cov=src --cov-report=term-missing"
 dev = ["check", "typecheck", "test"]

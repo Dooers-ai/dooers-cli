@@ -1,4 +1,4 @@
-"""`dooers agents` subcommands: list, create, show (core v2)."""
+"""`dooers agents` subcommands: list, create, show, delete (core v2)."""
 
 from pathlib import Path
 
@@ -11,24 +11,26 @@ from dooers.protocol.agents import (
     UiConfig,
     WhatsAppConfig,
 )
+from dooers.protocol.teardown import format_teardown_result
 
 from dooers.cli import config
 from dooers.cli.agent_store import AgentStoreError, HTTPCoreAgentStore
 from dooers.cli.org import resolve_org_for_cli
+from dooers.cli.push_client import PushClient, PushClientError
 from dooers.cli.settings import Settings
 from dooers.cli.token_store import TokenStore, is_token_expired
 
 app = typer.Typer(no_args_is_help=True)
 
 
-def _store(ctx: typer.Context) -> tuple[HTTPCoreAgentStore, Settings]:
+def _store(ctx: typer.Context) -> tuple[HTTPCoreAgentStore, Settings, str]:
     settings: Settings = ctx.obj
     store_token = TokenStore()
     token = store_token.load()
     if not token or is_token_expired(token, store=store_token):
         typer.echo("Not authenticated. Run `dooers login`.", err=True)
         raise typer.Exit(code=1)
-    return HTTPCoreAgentStore(settings.core_url, token), settings
+    return HTTPCoreAgentStore(settings.core_url, token), settings, token
 
 
 @app.command()
@@ -40,7 +42,7 @@ def create(
         None, "--description", help="Short description of the agent."
     ),
 ) -> None:
-    store, settings = _store(ctx)
+    store, settings, _ = _store(ctx)
     organization_id = resolve_org_for_cli(settings, org)
     try:
         rec = store.create(CreateAgentRequest(organization_id=organization_id, name=name))
@@ -68,7 +70,7 @@ def create(
 
 @app.command(name="list")
 def list_agents(ctx: typer.Context, org: str | None = typer.Option(None, "--org")) -> None:
-    store, settings = _store(ctx)
+    store, settings, _ = _store(ctx)
     organization_id = resolve_org_for_cli(settings, org)
     try:
         records = store.list_by_org(organization_id)
@@ -85,7 +87,7 @@ def list_agents(ctx: typer.Context, org: str | None = typer.Option(None, "--org"
 
 @app.command()
 def show(ctx: typer.Context, agent_id: str = typer.Argument(...)) -> None:
-    store, _ = _store(ctx)
+    store, _, _ = _store(ctx)
     try:
         r = store.get(agent_id)
     except KeyError:
@@ -98,3 +100,70 @@ def show(ctx: typer.Context, agent_id: str = typer.Argument(...)) -> None:
     typer.echo(f"Name:  {r.name}")
     typer.echo(f"Org:   {r.organization_id}")
     typer.echo(f"URL:   {r.host_url or '—'}")
+
+
+@app.command()
+def delete(
+    ctx: typer.Context,
+    agent_id: str = typer.Argument(..., help="Agent id to delete."),
+    archive: bool = typer.Option(
+        False, "--archive", help="Archive an active agent first, then delete."
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+) -> None:
+    store, settings, token = _store(ctx)
+
+    # 1. Fetch the record (existence + status + name).
+    try:
+        rec = store.get(agent_id)
+    except KeyError:
+        typer.echo(f"Agent {agent_id} not found.", err=True)
+        raise typer.Exit(code=1)
+    except AgentStoreError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    # 2. Active-state pre-check — fail fast before touching any infra.
+    if rec.status == "active" and not archive:
+        typer.echo(
+            f"Agent {agent_id} is active; pass --archive to archive-then-delete, "
+            "or archive it first.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    # 3. Confirm (abort=True raises typer.Abort → exit 1, no further calls).
+    if not yes:
+        typer.confirm(
+            f"Delete agent {rec.name or agent_id} ({agent_id})? "
+            "This deletes the record and tears down its deployed service. "
+            "This cannot be undone.",
+            abort=True,
+        )
+
+    # 4. Archive an active agent if requested (clears core's active-state delete guard).
+    if rec.status == "active" and archive:
+        try:
+            store.archive(agent_id)
+        except AgentStoreError as e:
+            typer.echo(f"Archive failed: {e}", err=True)
+            raise typer.Exit(code=1) from e
+
+    # 5. Tear down infra (Cloud Run + LB rule) via dooers-push — BEFORE the record delete.
+    push = PushClient(base_url=settings.push_url, token=token)
+    try:
+        teardown = push.teardown(agent_id, env=settings.env)
+    except PushClientError as e:
+        typer.echo(f"Teardown failed: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    # 6. Delete the core record.
+    try:
+        store.delete(agent_id)
+    except AgentStoreError as e:
+        typer.echo(f"Service torn down, but the core record was not deleted: {e}", err=True)
+        raise typer.Exit(code=1) from e
+
+    # 7. Summary.
+    typer.echo(f"Deleted agent {agent_id} ({rec.name}).")
+    typer.echo(format_teardown_result(teardown))

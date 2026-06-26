@@ -7,4 +7,4 @@ warnings.warn(
     DeprecationWarning,
     stacklevel=2,
 )
-from dooers.protocol import *  # noqa: F403
+from dooers.protocol import *  # noqa: E402,F403

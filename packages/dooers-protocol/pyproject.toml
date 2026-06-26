@@ -1,6 +1,6 @@
 [project]
 name = "dooers-protocol"
-version = "0.4.0"
+version = "0.6.0"
 description = "Dooers — wire protocol shared between CLI and dooers-push service"
 readme = "README.md"
 license = "MIT"
@@ -46,6 +46,10 @@ select = ["E", "F", "I", "UP"]
 [tool.ruff.format]
 quote-style = "double"
 
+[tool.mypy]
+mypy_path = "src"
+explicit_package_bases = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
@@ -53,7 +57,7 @@ testpaths = ["tests"]
 format = "ruff format ."
 check = "ruff check ."
 "check:fix" = "ruff check --fix ."
-typecheck = "mypy src/dooers.protocol"
+typecheck = "mypy -p dooers.protocol"
 test = "pytest"
 "test:cov" = "pytest --cov=src --cov-report=term-missing"
 dev = ["check", "typecheck", "test"]
