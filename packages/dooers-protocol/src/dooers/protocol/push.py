@@ -76,15 +76,14 @@ def format_push_failure(response: PushResponse | BuildStatusResponse) -> str:
         lines.append(f"Failed during: {response.failed_step}")
     if response.error:
         lines.append(response.error)
-    # `build_log_url` (a console URL that embeds the project id) only exists on
-    # the legacy PushResponse and is never present on BuildStatusResponse, which
-    # carries a sanitized correlation_id for support instead.
-    build_log_url = getattr(response, "build_log_url", None)
+    # Never surface `build_log_url`: it is a console URL that embeds the GCP
+    # project id (info leak). Show a sanitized reference for support instead —
+    # the correlation_id when present (async BuildStatusResponse), else the
+    # build id. (Restores the intent of de1b80c, which the async-push merge
+    # accidentally reverted while leaving its test in place.)
     correlation_id = getattr(response, "correlation_id", None)
-    if build_log_url:
-        lines.append(f"Build logs: {build_log_url}")
-    elif correlation_id:
+    if correlation_id:
         lines.append(f"Reference: {correlation_id}")
     elif response.build_id:
-        lines.append(f"Build ID: {response.build_id}")
+        lines.append(f"Reference: build {response.build_id}")
     return "\n".join(lines)

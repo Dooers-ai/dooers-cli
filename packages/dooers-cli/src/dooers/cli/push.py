@@ -17,7 +17,12 @@ from dooers.protocol.push import (
 
 from dooers.cli import config, ignore
 from dooers.cli.manifest_sync import build_agent_patch
-from dooers.cli.push_client import PushClient, PushClientError, PushTransientError
+from dooers.cli.push_client import (
+    PushClient,
+    PushClientError,
+    PushTransientError,
+    friendly_push_error,
+)
 from dooers.cli.settings import Settings
 from dooers.cli.token_store import TokenStore, is_token_expired
 
@@ -153,7 +158,8 @@ def push(
             agent_id=agent_id, archive_path=archive_path, tag=tag, env=target_env
         )
     except PushClientError as e:
-        typer.echo(f"Push failed: {e}", err=True)
+        code = e.envelope.error_code if e.envelope else None
+        typer.echo(f"Push failed: {friendly_push_error(code, str(e))}", err=True)
         raise typer.Exit(code=1) from e
     finally:
         os.unlink(archive_path)
@@ -170,7 +176,7 @@ def push(
         typer.echo("\nAudit: 0 endpoints detected.")
 
     # Poll until terminal, relabeling the spinner with the current phase.
-    spinner_state: dict[str, Callable[[], None] | str] = {}
+    spinner_state: dict[str, object] = {}
 
     def _start_spinner(label: str) -> None:
         cancel = spinner_state.get("cancel")

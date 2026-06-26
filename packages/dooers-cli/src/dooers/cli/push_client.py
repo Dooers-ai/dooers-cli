@@ -3,12 +3,25 @@
 from pathlib import Path
 
 import httpx
-from dooers.protocol.errors import ErrorEnvelope
+from dooers.protocol.errors import ErrorCode, ErrorEnvelope
 from dooers.protocol.push import BuildStatusResponse, PushAcceptedResponse
 from dooers.protocol.teardown import TeardownResponse
 
 # 5xx responses that mean "try again later" rather than "this build is broken".
 _TRANSIENT_STATUS = frozenset({502, 503, 504})
+
+
+def friendly_push_error(error_code: object, message: str) -> str:
+    """Map a server error code to a CLI-friendly message; fall back to `message`.
+
+    `error_code` may be an `ErrorCode` (a str enum) or a plain string.
+    """
+    if error_code == ErrorCode.org_not_provisioned.value:
+        return (
+            "Your organization isn't set up for agent hosting yet. "
+            "Contact Dooers to enable hosting for your organization."
+        )
+    return message
 
 
 class PushClientError(RuntimeError):

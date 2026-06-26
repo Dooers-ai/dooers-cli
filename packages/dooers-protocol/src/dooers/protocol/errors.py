@@ -9,6 +9,7 @@ class ErrorCode(str, Enum):
     unauthenticated = "unauthenticated"
     forbidden = "forbidden"
     not_found = "not_found"
+    org_not_provisioned = "org_not_provisioned"
     archive_too_large = "archive_too_large"
     audit_failed = "audit_failed"
     build_failed = "build_failed"

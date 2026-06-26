@@ -11,12 +11,26 @@ class AgentStoreError(RuntimeError):
 
 
 def _data(resp: httpx.Response):
-    body = resp.json()
+    # The body may not be JSON: framework-level errors (e.g. a 403 "Forbidden")
+    # and empty success bodies (204) are common. Never let json() crash the CLI.
+    try:
+        body = resp.json()
+    except (json.JSONDecodeError, ValueError):
+        body = None
+
     if isinstance(body, dict) and body.get("success") is False:
         raise AgentStoreError(body.get("error", {}).get("message", f"HTTP {resp.status_code}"))
     if resp.status_code >= 400:
-        raise AgentStoreError(f"HTTP {resp.status_code}")
-    return body.get("data", body)
+        detail = ""
+        if isinstance(body, dict):
+            err = body.get("error")
+            if isinstance(err, dict):
+                detail = err.get("message", "")
+            detail = detail or body.get("message", "")
+        detail = detail or (resp.text or "").strip()
+        msg = f"HTTP {resp.status_code}"
+        raise AgentStoreError(f"{msg}: {detail}" if detail else msg)
+    return body.get("data", body) if isinstance(body, dict) else body
 
 
 def _record(d: dict) -> AgentRecord:

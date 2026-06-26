@@ -23,6 +23,31 @@
 
 ---
 
+## Architecture re-baseline — async push main (READ FIRST)
+
+This plan was first drafted against the **synchronous** `dooers-push` (where `DeployerStep.run` built, waited, deployed, and registered the LB in-request). Since then the **async push** work merged to `dooers-push` main (`8152039`). The security design is unchanged; only the **integration points** move. Verified facts on current main:
+
+- `POST /v1/push/{agent_id}` returns **202** after: auth → ownership → hosting gate → `storage.upload_archive` → `AuditorStep`+`ProvisionerStep` → `trigger_build` → write a `building` `BuildRecord`. No in-request build wait.
+- **Cloud Build still deploys Cloud Run itself** — `trigger_build` adds a 3rd build step (`gcp/cloudbuild.py:_build_deploy_script` → `gcloud run deploy --service-account=agent-deploy-service`). So the user-controlled build worker STILL shares a credential with deploy. This is exactly the hole, present in async too.
+- Build completion arrives via the **Pub/Sub webhook** `POST /v1/internal/build-events` → `finalize_deploy(ctx, settings, store, *, build_succeeded, build, lb=None, core=None)` (in `pipeline/deployer.py`). Today `finalize_deploy` only does **LB registration + host_url write-back** (success) or **classify+redact** (failure). It does NOT deploy Cloud Run.
+- The webhook **reconstructs `ctx` from the `BuildRecord`** (`main.py` ~line 362), and `BuildRecord` currently carries **no `organization_id` and no `gcs_uri`** — so the org identity is not available post-build yet.
+- `trigger_build` has **two callers**: `main.py` (the live async path) and `pipeline/deployer.py` `DeployerStep` (now **dead on the hot path** — `main.py` uses `finalize_deploy`, never `DeployerStep`). Keep `DeployerStep` compiling/tested but treat `main.py` + `finalize_deploy` as the integration target.
+
+**Consequence for this plan — deploy MUST move to the webhook/control-plane, not the request:** in async the image only exists after the build completes, so the tenant-SA Run-API deploy belongs in **`finalize_deploy`'s success path** (`_finalize_success`), which already runs in the trusted webhook context and already holds the completed `build` object (digest source). The net change vs. the synchronous draft:
+
+| Synchronous draft (old) | Async target (this re-baseline) |
+|---|---|
+| Task B7 rewrites `DeployerStep.run` to build→deploy→LB | Task B7 moves the Run-API deploy into `finalize_deploy._finalize_success`, before LB; `DeployerStep` only gets the new `trigger_build` signature |
+| Env parsed in request, passed via `ctx.env_overrides` to in-request deploy | Env re-parsed from the archive in `_finalize_success` (webhook has no request body); `BuildRecord` carries `gcs_uri` so the archive is locatable. Keeps agent secrets out of the build-status store |
+| `org_id` flows through the in-request `ctx` | `BuildRecord` gains `organization_id`; the webhook rebuilds `ctx.agent` with it |
+| Digest read by a follow-up `wait_for_build` | Digest read from the `build` object the webhook already fetched (`build.results.images[0].digest`); `finalize_deploy`/`_finalize_success` gain a `build` arg |
+
+Control-plane IAM note: because the webhook re-reads the source archive to parse env, `dooers-push-runtime` needs **`roles/storage.objectViewer`** on `gs://dooers-agents-src` (in addition to `objectCreator` for ingest). It already wrote the object; reading its own uploads is acceptable for the trusted control plane and keeps agent `.env` secrets confined to the source bucket (never copied into the GCS-backed build-status store). Phase D2 is updated accordingly.
+
+Tasks **A1, B1 (`tenancy`), B2 (`env_files`), B3 (`google-cloud-run` dep), B5 (`gcp/cloudrun.py`), B6 (`storage.py`), B9 (`provision.py`), B10 (docs), C1** are unaffected by sync-vs-async — apply them as written. Tasks **B4, B7, B8** are revised below for the async flow.
+
+---
+
 ## Phase A — `dooers-protocol`: additive error code
 
 ### Task A1: Add `org_not_provisioned` error code
@@ -76,6 +101,11 @@ git commit -m "feat(protocol): add org_not_provisioned error code"
 ## Phase B — `dooers-push`: pipeline identity split
 
 All Phase B paths are in the **`dooers-push` repo root** (sibling of `dooers-cli`). Run `uv sync --extra dev` once at the start.
+
+> **Codebase convergence update (main `7dc9283`).** Two recently-merged commits move the codebase toward this design; adjust the tasks below accordingly:
+> - **`a064b5e` (harden env injection)** rewrote the in-build deploy to write env vars to a JSON file and **stopped merging local `.env`** — only `env.<env>` (e.g. `env.prod`) is read now. **Correctness requirement:** `env_files.parse_env_archive` (Task B2) and `parse_env_from_gcs` (Task B7) MUST parse **only `env.<env>`**, NOT `.env`. Re-introducing the `.env` merge would regress a deliberate security hardening. Update Task B2's signature to `parse_env_archive(archive_path, env) -> dict` reading just `env.<env>`, and drop the `.env`/"later wins" test cases (keep the comment-stripping + zip/tar cases).
+> - **`c9ffd21` (teardown endpoint)** already **created `src/dooers_push/gcp/cloudrun.py`** (with an async `delete_service` using `run_v2.ServicesAsyncClient`) and already **added `google-cloud-run`** (installed: 0.16.1, `invoker_iam_disabled` confirmed present). Therefore: **Task B3 is already satisfied** (verify-only, no dep edit). **Task B5 EXTENDS the existing `cloudrun.py`** rather than creating it — add `build_image_ref` + an **async** `deploy_service(...)` using `run_v2.ServicesAsyncClient` (mirror `delete_service`'s style/imports). Consequently Task B7 calls `await deploy_service(...)`.
+> - The teardown `DELETE /v1/agents/{agent_id}` deletes the Cloud Run service via the control plane (`run.developer`, granted in Phase D2) — no tenant-SA change needed, but it benefits from the same grant; no extra work.
 
 ### Task B1: `tenancy.py` — org id → resource names (pure)
 
@@ -385,6 +415,10 @@ git commit -m "build: add google-cloud-run for the Run Admin API deploy"
   - `trigger_build(*, project_id, gcs_uri, agent_id, owner_user_id, org_id, region, env, tag) -> tuple[str, str]` returns `(build_id, image_uri_with_tag)`. (NOTE: `artifact_repo` param is **removed**; `org_id` is **added**.)
   - `BuildWaitResult` gains `image_digest: str | None = None`.
   - `wait_for_build(...)` populates `image_digest` from `build.results.images[0].digest` on success.
+- **Async-main specifics:**
+  - The current `trigger_build` builds **3** steps (build, push, **deploy via `_build_deploy_script`**). This task drops step 3 and deletes `_build_deploy_script` — deploy moves to `finalize_deploy` (Task B7). The deploy was the only consumer of the `--service-account=agent-deploy-service` line; removing it is what defuses the build-worker credential.
+  - **Both callers** must adopt the new signature: `main.py` (drop `artifact_repo=settings.artifact_repo`, add `org_id=agent.organization_id`) and `pipeline/deployer.py` `DeployerStep.run` (drop `artifact_repo`, add `org_id=ctx.agent.organization_id or ""`). The metadata test below covers the signature; add a one-line check that `main.py` import/call still resolves via `uv run poe test`.
+  - On the async path the digest is read from the `build` object inside the webhook (Task B7), so `wait_for_build`'s new `image_digest` field is primarily exercised by `DeployerStep`/tests; still implement it (the webhook reuses the same `build.results.images[0].digest` read).
 
 - [ ] **Step 1: Update the metadata test (build SA + per-org repo, no deploy step)**
 
@@ -792,40 +826,54 @@ git commit -m "feat: store agent source under a per-org prefix with org metadata
 
 ---
 
-### Task B7: `pipeline/base.py` + `pipeline/deployer.py` — orchestrate build → digest → deploy
+### Task B7: move the Cloud Run deploy into `finalize_deploy` (webhook/control-plane), as the tenant SA
+
+> **Async re-baseline.** Deploy can't happen in-request (the 202 returns before the image exists), so the tenant-SA Run-API deploy goes into `finalize_deploy._finalize_success`, which runs in the trusted Pub/Sub webhook and already holds the completed `build` object (digest source). `BuildRecord` carries `organization_id` + `gcs_uri` so the webhook can resolve the tenant SA and re-parse env. The synchronous `DeployerStep` is dead on the hot path but kept compiling.
 
 **Files:**
-- Modify: `src/dooers_push/pipeline/base.py` (context fields)
-- Modify: `src/dooers_push/pipeline/deployer.py`
-- Test: `tests/test_deployer_flow.py`
+- Modify: `src/dooers_push/pipeline/base.py` (context field)
+- Modify: `src/dooers_push/build_store.py` (`BuildRecord` gains `organization_id`, `gcs_uri`)
+- Modify: `src/dooers_push/pipeline/deployer.py` (`finalize_deploy`/`_finalize_success` deploy via Run API; `DeployerStep.run` new `trigger_build` signature)
+- Modify: `src/dooers_push/main.py` (webhook: persist + rehydrate `organization_id`/`gcs_uri`; success path; see also Task B8 for the request side)
+- Test: `tests/test_finalize_deploy.py` (new), update `tests/test_deployer_flow.py`
 
 **Interfaces:**
-- Consumes: updated `trigger_build`/`wait_for_build` (B4), `cloudrun.deploy_service`/`build_image_ref` (B5), `LBManager` (existing).
-- Produces: `PipelineContext` gains `env_overrides: dict[str, str] = {}` and `image_digest: str | None = None`. `DeployerStep.run` orchestrates: trigger build → wait → on success capture digest → `deploy_service(... service_account=tenant SA ...)` → LB register.
+- Consumes: `tenancy.tenant_sa_email`/`org_token` (B1), `env_files.parse_env_archive` (B2), `cloudrun.deploy_service`/`build_image_ref` (B5), the `build` object from `get_build` (existing).
+- Produces:
+  - `BuildRecord` gains `organization_id: str = ""` and `gcs_uri: str = ""`.
+  - `PipelineContext` gains `image_digest: str | None = None` (env is NOT carried on ctx in async — it's re-parsed at deploy time).
+  - `finalize_deploy(...)` and `_finalize_success(...)` gain a `build: cloudbuild_v1.Build | None` parameter (already passed to `_finalize_failure`; now also to `_finalize_success`).
+  - `_finalize_success` deploys Cloud Run via `deploy_service(... service_account=tenant SA, image_ref=<repo>@<digest> ...)` **before** LB registration, transitioning the record `deploying`/phase=`cloud_run_deploy` → then `load_balancer` → `succeeded`.
 
-- [ ] **Step 1: Add context fields**
+- [ ] **Step 1: Add `BuildRecord` fields + context field**
+
+In `build_store.py`, add to the `BuildRecord` dataclass (after `agent_id`/`env`, before `status` is fine — keep defaults last):
+
+```python
+    organization_id: str = ""
+    gcs_uri: str = ""
+```
 
 In `pipeline/base.py`, add to `PipelineContext`:
 
 ```python
-    env_overrides: dict[str, str] = {}
     image_digest: str | None = None
 ```
 
-- [ ] **Step 2: Write the failing deployer test**
+- [ ] **Step 2: Write the failing finalize-deploy test**
 
 ```python
-# tests/test_deployer_flow.py
+# tests/test_finalize_deploy.py
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from google.cloud.devtools.cloudbuild_v1.types import Build
+
 from dooers.protocol.agents import AgentRecord
 from dooers.protocol.auth import AuthSession
-from dooers.protocol.push import BuildStatus
 
-from dooers_push.gcp.cloudbuild import BuildWaitResult
 from dooers_push.pipeline.base import PipelineContext
-from dooers_push.pipeline.deployer import DeployerStep
+from dooers_push.pipeline.deployer import finalize_deploy
 from dooers_push.settings import Settings
 
 
@@ -841,156 +889,179 @@ def _settings():
 def _ctx():
     return PipelineContext(
         agent=AgentRecord(agent_id="a1", name="a1", owner_user_id="u1", organization_id="org1", host_url=None),
-        user=AuthSession(user_id="u1"),
+        user=AuthSession(user_id="", email=""),
         gcs_uri="gs://dooers-agents-src/agents/org1/a1/1-x.tar.gz",
-        tag="latest", env="dev", env_overrides={"FOO": "bar"},
+        tag="latest", env="dev", build_id="bid",
     )
 
 
-def test_deployer_deploys_as_tenant_sa_by_digest():
-    step = DeployerStep(_settings())
-    step.lb.register_agent = AsyncMock(return_value="https://agents.dooers.ai/a1-dev")
-    step.lb.wait_until_reachable = AsyncMock(return_value=None)
+def test_finalize_success_deploys_as_tenant_sa_by_digest(tmp_path):
+    build = Build(status=Build.Status.SUCCESS)
+    build.results.images.add().digest = "sha256:abc"
 
-    with patch("dooers_push.pipeline.deployer.trigger_build", return_value=("bid", "img:latest")), \
-         patch("dooers_push.pipeline.deployer.wait_for_build", new=AsyncMock(return_value=BuildWaitResult(success=True, image_digest="sha256:abc"))), \
-         patch("dooers_push.pipeline.deployer.deploy_service", return_value="https://a1-dev.run.app") as deploy:
-        result = asyncio.run(step.run(_ctx()))
+    store = MagicMock()
+    lb = MagicMock()
+    lb.register_agent = AsyncMock(return_value="https://agents.dooers.ai/a1-dev")
+    lb.wait_until_reachable = AsyncMock(return_value=None)
 
-    assert result.status == BuildStatus.succeeded
+    with patch("dooers_push.pipeline.deployer.deploy_service", return_value="https://a1-dev.run.app") as deploy, \
+         patch("dooers_push.pipeline.deployer.parse_env_from_gcs", return_value={"FOO": "bar"}):
+        asyncio.run(finalize_deploy(_ctx(), _settings(), store, build_succeeded=True, build=build, lb=lb, core=None))
+
     kwargs = deploy.call_args.kwargs
     assert kwargs["service_account"].startswith("tenant-")
     assert kwargs["image_ref"].endswith("@sha256:abc")
     assert kwargs["env_vars"]["FOO"] == "bar"
     assert kwargs["env_vars"]["GCP_PROJECT_ID"] == "dooers-agents"
-    assert kwargs["labels"]["org"] == "org1"
+    # deploy happened before LB registration
+    deploy.assert_called_once()
+    lb.register_agent.assert_awaited_once()
 
 
-def test_deployer_fails_when_no_digest():
-    step = DeployerStep(_settings())
-    with patch("dooers_push.pipeline.deployer.trigger_build", return_value=("bid", "img:latest")), \
-         patch("dooers_push.pipeline.deployer.wait_for_build", new=AsyncMock(return_value=BuildWaitResult(success=True, image_digest=None))):
-        result = asyncio.run(step.run(_ctx()))
-    assert result.status == BuildStatus.failed
+def test_finalize_success_fails_without_digest():
+    build = Build(status=Build.Status.SUCCESS)  # no images → no digest
+    store = MagicMock()
+    lb = MagicMock(); lb.register_agent = AsyncMock(); lb.wait_until_reachable = AsyncMock()
+    with patch("dooers_push.pipeline.deployer.parse_env_from_gcs", return_value={}):
+        try:
+            asyncio.run(finalize_deploy(_ctx(), _settings(), store, build_succeeded=True, build=build, lb=lb, core=None))
+        except Exception:
+            pass
+    # records a failed status and never registers the LB
+    statuses = [c.kwargs.get("status") for c in store.update.call_args_list]
+    assert "failed" in statuses
+    lb.register_agent.assert_not_called()
 ```
+
+> `parse_env_from_gcs(gcs_uri, env, settings)` is a thin helper added in this task: download the archive blob to a temp file and call `env_files.parse_env_archive`. It's patched in tests so no network is hit. Keeping env parse at deploy time (not on the record) keeps agent `.env` secrets out of the GCS-backed build-status store.
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `uv run pytest tests/test_deployer_flow.py -v`
-Expected: FAIL.
+Run: `uv run pytest tests/test_finalize_deploy.py -v`
+Expected: FAIL — `parse_env_from_gcs` / deploy wiring not present.
 
-- [ ] **Step 4: Implement the deployer orchestration**
+- [ ] **Step 4: Implement the deploy in `_finalize_success`**
 
-Rewrite `DeployerStep.run` so Phase 1 builds (build+push) then deploys via the Run API:
+In `pipeline/deployer.py`:
+- Add imports: `from dooers_push import tenancy`, `from dooers_push.env_files import parse_env_archive`, `from dooers_push.gcp.cloudrun import build_image_ref, deploy_service`, `from dooers_push.gcp.cloudbuild import cloud_run_service_name`, and `from google.cloud import storage` (for the helper).
+- Add the GCS env helper:
 
 ```python
-from dooers_push import tenancy
-from dooers_push.gcp.cloudbuild import build_log_url, trigger_build, wait_for_build
-from dooers_push.gcp.cloudrun import build_image_ref, deploy_service
-from dooers_push.gcp.cloudbuild import cloud_run_service_name
-
-    async def run(self, ctx: PipelineContext) -> StepResult:
-        org_id = ctx.agent.organization_id or ""
-        try:
-            build_id, _image = trigger_build(
-                project_id=self.settings.gcp_project_id,
-                gcs_uri=ctx.gcs_uri,
-                agent_id=ctx.agent.agent_id,
-                owner_user_id=ctx.user.user_id,
-                org_id=org_id,
-                region=self.settings.gcp_region,
-                env=ctx.env,
-                tag=ctx.tag,
-            )
-            ctx.build_id = build_id
-            build_result = await wait_for_build(build_id, project_id=self.settings.gcp_project_id)
-            if not build_result.success:
-                return StepResult(status=BuildStatus.failed, error=build_result.error or "Cloud Build reported failure",
-                                  failed_step=build_result.failed_step, build_log_url=build_result.build_log_url)
-            if not build_result.image_digest:
-                return StepResult(status=BuildStatus.failed, error="build succeeded but no image digest was returned",
-                                  build_log_url=build_result.build_log_url)
-            ctx.image_digest = build_result.image_digest
-        except TimeoutError as e:
-            log_url = build_log_url(ctx.build_id, self.settings.gcp_project_id) if ctx.build_id else None
-            return StepResult(status=BuildStatus.failed, error=str(e), build_log_url=log_url)
-        except ValueError as e:
-            return StepResult(status=BuildStatus.failed, error=str(e))
-        except Exception as e:  # noqa: BLE001
-            logger.exception("build phase crashed")
-            log_url = build_log_url(ctx.build_id, self.settings.gcp_project_id) if ctx.build_id else None
-            return StepResult(status=BuildStatus.failed, error=f"build error: {e}", build_log_url=log_url)
-
-        # Phase 2: deploy via Run Admin API as the per-org tenant SA, pinned by digest.
-        service_name = cloud_run_service_name(ctx.agent.agent_id, ctx.env)
-        image_ref = build_image_ref(self.settings.gcp_region, self.settings.gcp_project_id, org_id, service_name, ctx.image_digest)
-        ctx.image = image_ref
-        env_vars = {
-            "GCP_PROJECT_ID": self.settings.gcp_project_id,
-            "GCP_REGION": self.settings.gcp_region,
-            "ENVIRONMENT": ctx.env,
-            **ctx.env_overrides,
-        }
-        labels = {
-            "agent_id": ctx.agent.agent_id,
-            "owner_user_id": ctx.user.user_id,
-            "org": tenancy.org_token(org_id),
-            "env": ctx.env,
-        }
-        try:
-            deploy_service(
-                project=self.settings.gcp_project_id,
-                region=self.settings.gcp_region,
-                service_name=service_name,
-                image_ref=image_ref,
-                service_account=tenancy.tenant_sa_email(org_id, self.settings.gcp_project_id),
-                env_vars=env_vars,
-                labels=labels,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.exception("deploy phase crashed")
-            return StepResult(status=BuildStatus.failed, error=f"deploy error: {e}",
-                              build_log_url=build_log_url(ctx.build_id, self.settings.gcp_project_id) if ctx.build_id else None)
-
-        # Phase 3: LB registration (unchanged)
-        try:
-            lb_url = await self.lb.register_agent(ctx.agent.agent_id, ctx.env)
-            await self.lb.wait_until_reachable(lb_url)
-            ctx.lb_url = lb_url
-            return StepResult(status=BuildStatus.succeeded)
-        except LBError as e:
-            logger.exception("LB registration failed")
-            return StepResult(status=BuildStatus.failed, error=f"LB registration failed: {e}",
-                              build_log_url=build_log_url(ctx.build_id, self.settings.gcp_project_id) if ctx.build_id else None)
+def parse_env_from_gcs(gcs_uri: str, env: str, settings: Settings) -> dict[str, str]:
+    """Download the source archive from GCS and parse env files. Best-effort:
+    returns {} if the uri is empty or the object can't be read."""
+    if not gcs_uri.startswith("gs://"):
+        return {}
+    _, rest = gcs_uri.split("gs://", 1)
+    bucket_name, object_path = rest.split("/", 1)
+    import tempfile
+    from pathlib import Path
+    client = storage.Client(project=settings.gcp_project_id)
+    blob = client.bucket(bucket_name).blob(object_path)
+    suffix = ".zip" if object_path.endswith(".zip") else ".tar.gz"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        blob.download_to_filename(str(tmp_path))
+        return parse_env_archive(tmp_path, env)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 ```
 
-> Note: the `labels["org"]` uses the hashed token (label values must be ≤63 chars and `[a-z0-9_-]`); the raw org id lives in GCS metadata + the SA description. If you prefer the raw org id as a label, sanitize it to the GCP label charset first.
+- Thread `build` into `_finalize_success` and deploy before LB. Replace the head of `_finalize_success` so it (1) reads the digest from `build`, (2) deploys as the tenant SA, (3) then does the existing LB + host_url block:
+
+```python
+async def _finalize_success(
+    ctx: PipelineContext,
+    settings: Settings,
+    store: BuildStore,
+    *,
+    build: cloudbuild_v1.Build | None,
+    lb: LBManager | None,
+    core: CoreClient | None,
+) -> None:
+    build_id = ctx.build_id or ""
+    lb = lb or LBManager(settings)
+    org_id = ctx.agent.organization_id or ""
+
+    # 1. Deploy Cloud Run via the Run Admin API as the per-org tenant SA, pinned by digest.
+    digest = None
+    if build is not None and build.results and build.results.images:
+        digest = build.results.images[0].digest or None
+    if not digest:
+        store.update(build_id, status=BuildStatus.failed.value, phase=None,
+                     error="build succeeded but no image digest was returned", error_class="infra")
+        return
+
+    store.update(build_id, status=BuildStatus.deploying.value, phase="cloud_run_deploy")
+    service_name = cloud_run_service_name(ctx.agent.agent_id, ctx.env)
+    image_ref = build_image_ref(settings.gcp_region, settings.gcp_project_id, org_id, service_name, digest)
+    env_vars = {
+        "GCP_PROJECT_ID": settings.gcp_project_id,
+        "GCP_REGION": settings.gcp_region,
+        "ENVIRONMENT": ctx.env,
+        **parse_env_from_gcs(ctx.gcs_uri, ctx.env, settings),
+    }
+    labels = {
+        "agent_id": ctx.agent.agent_id,
+        "org": tenancy.org_token(org_id),
+        "env": ctx.env,
+    }
+    deploy_service(
+        project=settings.gcp_project_id,
+        region=settings.gcp_region,
+        service_name=service_name,
+        image_ref=image_ref,
+        service_account=tenancy.tenant_sa_email(org_id, settings.gcp_project_id),
+        env_vars=env_vars,
+        labels=labels,
+    )
+
+    # 2. LB registration + host_url write-back (existing logic, unchanged below).
+    store.update(build_id, status=BuildStatus.deploying.value, phase="load_balancer")
+    lb_url = await lb.register_agent(ctx.agent.agent_id, ctx.env)
+    await lb.wait_until_reachable(lb_url)
+    ctx.lb_url = lb_url
+    # ... keep the existing host_url_recorded block and final store.update(succeeded) ...
+```
+
+- Update `finalize_deploy` to pass `build` into `_finalize_success`:
+
+```python
+    await _finalize_success(ctx, settings, store, build=build, lb=lb, core=core)
+```
+
+- Update `DeployerStep.run`'s `trigger_build(...)` call to the new signature (drop `artifact_repo=`, add `org_id=ctx.agent.organization_id or ""`). `DeployerStep` is legacy; this just keeps it compiling. (Its old `tests/test_deployer_flow.py` should be updated to pass `organization_id="org1"` on the `AgentRecord` and to expect the new `trigger_build` kwargs; drop the assertions about `DeployerStep` deploying via Run API — that path is exercised by `test_finalize_deploy.py` now.)
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `uv run pytest tests/test_deployer_flow.py tests/ -v`
-Expected: PASS (update any other deployer-touching tests).
+Run: `uv run pytest tests/test_finalize_deploy.py tests/test_deployer_flow.py -v && uv run poe typecheck`
+Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/dooers_push/pipeline/base.py src/dooers_push/pipeline/deployer.py tests/test_deployer_flow.py
-git commit -m "feat: deployer builds then deploys via Run API as tenant SA by digest"
+git add src/dooers_push/pipeline/base.py src/dooers_push/build_store.py src/dooers_push/pipeline/deployer.py tests/test_finalize_deploy.py tests/test_deployer_flow.py
+git commit -m "feat: deploy Cloud Run in finalize_deploy as tenant SA by digest (async)"
 ```
 
 ---
 
-### Task B8: `main.py` — thread org id, parse env, precheck provisioning
+### Task B8: `main.py` — precheck provisioning, persist org id + gcs_uri, rehydrate in webhook
+
+> **Async re-baseline.** The request handler does NOT parse env or deploy (that's Task B7 in the webhook). It (a) prechecks the tenant SA exists, (b) uploads under the per-org prefix, (c) persists `organization_id` + `gcs_uri` on the `BuildRecord` so the webhook can deploy as the tenant SA and re-parse env post-build.
 
 **Files:**
-- Modify: `src/dooers_push/main.py`
+- Modify: `src/dooers_push/main.py` (push route + `build_events` webhook rehydration)
+- Modify: `src/dooers_push/tenancy.py` (add `tenant_sa_exists`)
+- Modify: `pyproject.toml`, `uv.lock` (`google-cloud-iam`)
 - Test: `tests/test_push_org_provisioned.py`
 
 **Interfaces:**
-- Consumes: `tenancy.tenant_sa_email` (B1), `env_files.parse_env_archive` (B2), updated `storage.upload_archive` (B6).
-- Produces: the `/v1/push/{agent_id}` route now (a) parses env from the uploaded archive, (b) rejects with 403 `org_not_provisioned` when the tenant SA doesn't exist, (c) passes `org_id` + `env_overrides` into the context.
+- Consumes: `tenancy.tenant_sa_email`/`tenant_sa_exists` (B1), updated `storage.upload_archive` (B6), `BuildRecord` fields `organization_id`/`gcs_uri` (B7).
+- Produces: the `/v1/push/{agent_id}` route (a) rejects with 403 `org_not_provisioned` when the tenant SA doesn't exist, (b) uploads with `org_id`, (c) writes `organization_id` + `gcs_uri` into the `BuildRecord`. The `build_events` webhook rehydrates `ctx.agent.organization_id` + `ctx.gcs_uri` from the record.
 
-> Provisioning precheck: use `google.cloud.iam_admin_v1` `get_service_account` and catch `NotFound`, OR (simpler, no new dep) `google.api_core` call against the IAM API. Wrap in a small `tenancy.tenant_sa_exists(org_id, project)` helper so it's mockable. Add a unit test that mocks it both ways.
+> Provisioning precheck: use `google.cloud.iam_admin_v1` `get_service_account` and catch `NotFound`. Wrap in a small `tenancy.tenant_sa_exists(org_id, project)` helper so it's mockable. Add a unit test that mocks it.
 
 - [ ] **Step 1: Add a mockable existence helper to `tenancy.py`**
 
@@ -1048,25 +1119,54 @@ def test_push_rejected_when_org_not_provisioned(monkeypatch):
 Run: `uv run pytest tests/test_push_org_provisioned.py -v`
 Expected: FAIL.
 
-- [ ] **Step 4: Implement the route changes**
+- [ ] **Step 4: Implement the route + webhook changes**
 
-In `main.py`, after the hosting gate and before upload, add the provisioning precheck and env parsing, and pass `org_id` + `env_overrides` through. The archive must be parsed before/around upload — read it into a temp file once, parse env from it, then upload. Minimal change: parse from the same temp path `storage.upload_archive` writes (refactor `upload_archive` to also return parsed env, OR parse the `UploadFile` separately). Recommended: have the route save the upload to a temp file, call `parse_env_archive(tmp, env)`, then pass the temp path to a thin `upload_archive` variant. Concretely:
+In the `push` route (`main.py`), after the hosting gate and before `upload_archive`, add the provisioning precheck; pass `org_id` to upload; and persist `organization_id` + `gcs_uri` on the `BuildRecord`:
 
 ```python
     org_id = agent.organization_id
     if not tenancy.tenant_sa_exists(org_id, settings.gcp_project_id):
-        raise HTTPException(status_code=403, detail="your organization is not provisioned for hosting")
+        correlation_id_local = correlation_id
+        return JSONResponse(
+            ErrorEnvelope(
+                error_code=ErrorCode.org_not_provisioned,
+                message="your organization is not provisioned for hosting",
+                correlation_id=correlation_id_local,
+            ).model_dump(mode="json"),
+            status_code=403,
+        )
 
-    # persist upload once, parse env, then upload to GCS
-    env_overrides = {}
-    gcs_uri = await storage.upload_archive(settings, agent_id, archive, owner_user_id=session.user_id, org_id=org_id)
-    # parse env from the archive bytes the client sent (re-read or capture during upload)
-    # simplest: storage.upload_archive returns (uri, tmp_path) or accept env parsing inside it.
+    gcs_uri = await storage.upload_archive(
+        settings, agent_id, archive, owner_user_id=session.user_id, org_id=org_id
+    )
 ```
 
-Implementation choice (pick one and keep it tested): extend `storage.upload_archive` to also return the local temp path (or the parsed env dict) so the route can build `env_overrides` without re-reading the network stream. Update the `PipelineContext(...)` construction to pass `env_overrides=env_overrides`. Map the `HTTPException(403, ...)` to the `org_not_provisioned` code in `_error_code_for_status` (add `403`-with-this-detail handling, or raise a typed exception the envelope handler maps to `ErrorCode.org_not_provisioned`).
+Then in the `store.put(BuildRecord(...))` call, add the two new fields:
 
-> Cleanest: change `_error_code_for_status` is keyed only on status. Instead, build the `ErrorEnvelope` for this specific case directly: return a `JSONResponse(ErrorEnvelope(error_code=ErrorCode.org_not_provisioned, message=..., correlation_id=...).model_dump(mode="json"), status_code=403)`.
+```python
+            organization_id=org_id,
+            gcs_uri=gcs_uri,
+```
+
+In the `build_events` webhook, rehydrate org + gcs when reconstructing `ctx` so `finalize_deploy` can deploy as the tenant SA and re-parse env:
+
+```python
+    ctx = PipelineContext(
+        agent=AgentRecord(
+            agent_id=rec.agent_id, name=rec.agent_id, owner_user_id="",
+            organization_id=rec.organization_id or None,
+        ),
+        user=AuthSession(user_id="", email=""),
+        gcs_uri=rec.gcs_uri or "",
+        tag="latest",
+        env=rec.env,
+        build_id=build_id,
+    )
+```
+
+Notes:
+- The `org_not_provisioned` envelope is returned directly (not via `_error_code_for_status`, which is keyed only on status), matching the existing `ErrorEnvelope` shape. Ensure `ErrorCode`/`ErrorEnvelope`/`JSONResponse` are imported in `main.py` (they already are).
+- `tenant_sa_exists` is patched in tests; it is the in-request guard so a push for an unprovisioned org fails fast and never triggers a build.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -1076,8 +1176,8 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/dooers_push/main.py src/dooers_push/tenancy.py src/dooers_push/storage.py pyproject.toml uv.lock tests/test_push_org_provisioned.py
-git commit -m "feat: precheck org provisioning + parse env, thread org id into pipeline"
+git add src/dooers_push/main.py src/dooers_push/tenancy.py src/dooers_push/storage.py src/dooers_push/build_store.py pyproject.toml uv.lock tests/test_push_org_provisioned.py
+git commit -m "feat: precheck org provisioning; persist org id + gcs_uri for async deploy"
 ```
 
 ---
@@ -1336,8 +1436,9 @@ git commit -m "feat(cli): friendly message for org_not_provisioned push errors"
 - [ ] Verify: the two SAs exist, repo `agents-<token>` exists, build SA has the conditioned bucket read, control plane has `serviceAccountUser` on both.
 
 ### D2 — control-plane roles (additive)
-- [ ] `gcloud projects add-iam-policy-binding $AGENTS --member=serviceAccount:$CP --role=roles/run.developer`
-- [ ] Downgrade the bucket grant: add `roles/storage.objectCreator` for `$CP` on `gs://$BUCKET`, then remove `roles/storage.objectAdmin` for `$CP` (add-then-remove, never leave it unable to upload).
+- [ ] `gcloud projects add-iam-policy-binding $AGENTS --member=serviceAccount:$CP --role=roles/run.developer` (deploy agent services via the Run Admin API).
+- [ ] Grant `$CP` `roles/iam.serviceAccountUser` on each `tenant-<token>` SA — done by `provision-org` in D1; verify it's present (the Run-API deploy runs services **as** the tenant SA, so the control plane must be able to actAs it).
+- [ ] Bucket grant for the async flow: `$CP` needs **both** write (ingest) and read (webhook re-parses env from the archive post-build). Add `roles/storage.objectViewer` for `$CP` on `gs://$BUCKET`, then replace `objectAdmin` with `objectCreator`: add `roles/storage.objectCreator`, then remove `roles/storage.objectAdmin` (add-then-remove, never leave it unable to upload). Net: `$CP` holds `objectViewer` + `objectCreator` (read its own uploads + write), not `objectAdmin` (which also allows delete/overwrite of others').
 
 ### D3 — deploy the new control plane
 - [ ] Build the new `dooers-push` image and deploy to `$SERVICES` (same command as `gcp-push-deploy.md` Phase B). No new env vars are required (org id comes from core).
