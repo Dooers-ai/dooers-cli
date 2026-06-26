@@ -99,3 +99,24 @@ def test_get_populates_status():
     )
     rec = HTTPCoreAgentStore(BASE, "tok").get(A)
     assert rec.status == "active"
+
+
+@respx.mock
+def test_delete_nonjson_403_raises_clean_error_not_jsondecode():
+    # Core returns a framework-level 403 with a plain-text body (not JSON).
+    respx.delete(f"{BASE}/api/v2/agents/{A}").mock(
+        return_value=httpx.Response(403, text="Forbidden")
+    )
+    store = HTTPCoreAgentStore(BASE, "tok")
+    with pytest.raises(AgentStoreError) as ei:
+        store.delete(A)
+    msg = str(ei.value)
+    assert "403" in msg and "Forbidden" in msg  # clean message, no JSONDecodeError
+
+
+@respx.mock
+def test_delete_empty_success_body_does_not_crash():
+    # A 204/empty success body must not blow up json() parsing.
+    respx.delete(f"{BASE}/api/v2/agents/{A}").mock(return_value=httpx.Response(204))
+    store = HTTPCoreAgentStore(BASE, "tok")
+    store.delete(A)  # should simply return without raising
