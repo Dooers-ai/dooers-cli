@@ -166,14 +166,20 @@ def test_description_empty_string_not_in_patch():
 
 
 # ---------------------------------------------------------------------------
-# minimal manifest → empty patch
+# hostUrl — always recorded (the CLI writes it; the async webhook can't)
 # ---------------------------------------------------------------------------
 
 
-def test_minimal_manifest_empty_patch():
+def test_minimal_manifest_records_host_url_only():
     m = _manifest()
     patch = build_agent_patch(m, DEPLOYED)
-    assert patch == {}
+    assert patch == {"hostUrl": DEPLOYED}
+
+
+def test_host_url_always_present_alongside_other_fields():
+    m = _manifest(message_path="/agent", description="A helpful agent")
+    patch = build_agent_patch(m, DEPLOYED)
+    assert patch["hostUrl"] == DEPLOYED
 
 
 # ---------------------------------------------------------------------------

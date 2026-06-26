@@ -1,6 +1,6 @@
 [project]
 name = "dooers-cli"
-version = "0.7.0"
+version = "0.7.1"
 description = "Dooers CLI — push agents to Dooers, manage agent records, authenticate from the terminal"
 readme = "README.md"
 license = "MIT"
