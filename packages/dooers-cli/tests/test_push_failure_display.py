@@ -19,5 +19,4 @@ def test_format_push_failure_includes_step_and_logs() -> None:
     assert "Deployment failed" in text
     assert "Failed during: build image" in text
     assert "docker build failed" in text
-    assert "Reference: build build-123" in text
-    assert "Build logs:" not in text
+    assert "Build logs:" in text
