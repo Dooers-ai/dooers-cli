@@ -278,7 +278,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "dooers-protocol"
-version = "0.6.0"
+version = "0.6.1"
 source = { editable = "../dooers-protocol" }
 dependencies = [
     { name = "pydantic" },
