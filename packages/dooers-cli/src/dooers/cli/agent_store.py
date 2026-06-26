@@ -54,6 +54,15 @@ class HTTPCoreAgentStore:
     def _h(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token}"}
 
+    def _post_json(self, url: str, body: dict | None = None) -> httpx.Response:
+        """POST with application/json — required to bypass core CSRF for Bearer-only clients."""
+        return httpx.post(
+            url,
+            headers={**self._h(), "Content-Type": "application/json"},
+            json=body if body is not None else {},
+            timeout=self._timeout,
+        )
+
     def create(self, req: CreateAgentRequest) -> AgentRecord:
         body = json.dumps({"organizationId": req.organization_id, "name": req.name})
         r = httpx.post(
@@ -82,9 +91,7 @@ class HTTPCoreAgentStore:
         return _record(_data(r))
 
     def archive(self, agent_id: str) -> None:
-        r = httpx.post(
-            f"{self.api}/agents/{agent_id}/archive", headers=self._h(), timeout=self._timeout
-        )
+        r = self._post_json(f"{self.api}/agents/{agent_id}/archive")
         _data(r)  # raises AgentStoreError on {success: false}; no record to parse
 
     def delete(self, agent_id: str) -> None:
@@ -94,9 +101,5 @@ class HTTPCoreAgentStore:
         _data(r)  # success body is {success, message} with no data key — do NOT call _record()
 
     def regenerate_runtime_api_key(self, agent_id: str) -> AgentRecord:
-        r = httpx.post(
-            f"{self.api}/agents/{agent_id}/runtime-api-key/regenerate",
-            headers=self._h(),
-            timeout=self._timeout,
-        )
+        r = self._post_json(f"{self.api}/agents/{agent_id}/runtime-api-key/regenerate")
         return _record(_data(r))

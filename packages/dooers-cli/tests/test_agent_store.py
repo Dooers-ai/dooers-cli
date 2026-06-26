@@ -75,6 +75,27 @@ def test_archive_posts_to_archive_route():
     )
     HTTPCoreAgentStore(BASE, "tok").archive(A)  # should not raise
     assert route.called
+    req = route.calls.last.request
+    assert req.headers["content-type"] == "application/json"
+    assert req.read() == b"{}"
+
+
+@respx.mock
+def test_regenerate_runtime_api_key_posts_json_body():
+    data = {
+        "agentId": A,
+        "name": "x",
+        "organizationId": "o1",
+        "runtimeApiKey": "new-secret-key",
+    }
+    route = respx.post(f"{BASE}/api/v2/agents/{A}/runtime-api-key/regenerate").mock(
+        return_value=httpx.Response(200, json={"success": True, "data": data})
+    )
+    rec = HTTPCoreAgentStore(BASE, "tok").regenerate_runtime_api_key(A)
+    assert rec.runtime_api_key == "new-secret-key"
+    req = route.calls.last.request
+    assert req.headers["content-type"] == "application/json"
+    assert req.read() == b"{}"
 
 
 @respx.mock

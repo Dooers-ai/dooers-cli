@@ -1,5 +1,16 @@
 """Top-level Typer app — login/whoami/logout + agents group + push."""
 
+import warnings
+
+# Global `dooers-agents-server` installs `dooers.protocol.frames` with a legacy
+# `schema` field name that Pydantic warns on at import. The CLI does not use WS
+# frames; suppress so every command stays quiet when both packages share `dooers.*`.
+warnings.filterwarnings(
+    "ignore",
+    message=r'Field name "schema" in "SettingsPublicSchemaResultPayload" shadows an attribute in parent "BaseModel"',
+    category=UserWarning,
+)
+
 import typer
 
 from . import agents, auth, org, push, validate
@@ -28,7 +39,9 @@ app.command(name="login", help="Authenticate with Dooers (OTP via email).")(auth
 app.command(name="whoami", help="Show the currently authenticated user.")(auth.whoami)
 app.command(name="logout", help="Clear local credentials.")(auth.logout)
 app.add_typer(
-    agents.app, name="agents", help="Manage agents — subcommands: list | create | show | delete."
+    agents.app,
+    name="agents",
+    help="Manage agents — subcommands: list | create | rotate-key | show | delete.",
 )
 app.add_typer(org.app, name="org", help="Manage organization — subcommands: list | use.")
 app.command(

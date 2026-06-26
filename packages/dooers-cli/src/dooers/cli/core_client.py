@@ -89,7 +89,10 @@ class CoreClient:
     def revoke(self) -> None:
         try:
             httpx.post(
-                f"{self.api}/identity/revoke", headers=self._headers(), timeout=self._timeout
+                f"{self.api}/identity/revoke",
+                headers={**self._headers(), "Content-Type": "application/json"},
+                json={},
+                timeout=self._timeout,
             )
         except httpx.HTTPError:
             pass  # best-effort
