@@ -27,7 +27,9 @@ def _root(
 app.command(name="login", help="Authenticate with Dooers (OTP via email).")(auth.login)
 app.command(name="whoami", help="Show the currently authenticated user.")(auth.whoami)
 app.command(name="logout", help="Clear local credentials.")(auth.logout)
-app.add_typer(agents.app, name="agents", help="Manage agents — subcommands: list | create | show.")
+app.add_typer(
+    agents.app, name="agents", help="Manage agents — subcommands: list | create | show | delete."
+)
 app.add_typer(org.app, name="org", help="Manage organization — subcommands: list | use.")
 app.command(
     name="validate",

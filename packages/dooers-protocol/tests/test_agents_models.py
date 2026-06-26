@@ -40,6 +40,11 @@ def test_agent_record_v2_shape():
     assert r.organization_id == "org_1"
 
 
+def test_agent_record_status_optional_and_settable() -> None:
+    assert AgentRecord(agent_id="a1", name="x").status is None
+    assert AgentRecord(agent_id="a1", name="x", status="active").status == "active"
+
+
 def test_create_agent_request_requires_org():
     req = CreateAgentRequest(organization_id="org_1", name="x")
     assert req.organization_id == "org_1"
