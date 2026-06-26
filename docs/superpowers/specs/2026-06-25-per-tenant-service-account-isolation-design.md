@@ -67,7 +67,7 @@ The principle: **every stage runs as a different identity with the minimum it ne
 
 | Stage | Identity | Scoped roles | Cross-org reach |
 |---|---|---|---|
-| **Ingest** (receive archive → GCS) | `dooers-push-runtime@dooers-services` (control plane, *our* code) | `storage.objectCreator` on `gs://dooers-agents-src` (write-only; was `objectAdmin`) | n/a (trusted control plane) |
+| **Ingest** (receive archive → GCS) | `dooers-push-runtime@dooers-services` (control plane, *our* code) | `storage.objectCreator` + `storage.objectViewer` on `gs://dooers-agents-src` (write at ingest, read its own uploads at deploy; was `objectAdmin`, which also allowed delete/overwrite) | n/a (trusted control plane) |
 | **Build** (docker build + push) | **`build-<token>@dooers-agents`** (NEW, per org) | `artifactregistry.writer` on **own** repo `agents-<token>` · `logging.logWriter` · `storage.objectViewer` on the bucket **conditioned** to `agents/<org_id>/**` | None — cannot read other orgs' source, cannot push to other repos, no run.*, no actAs |
 | **Deploy** (create/update Cloud Run) | control plane via **Cloud Run Admin API** (`run_v2`) | `run.developer` (project) + `iam.serviceAccountUser` on each `tenant-<token>` SA | Deploy is removed from the Cloud Build worker entirely |
 | **Runtime** (agent container) | **`tenant-<token>@dooers-agents`** (NEW, per org) | `logging.logWriter` only (DB grants slot in later) | None — no run.*, storage, AR, or actAs |
@@ -101,7 +101,7 @@ These helpers live in a pure, unit-tested `dooers_push/tenancy.py`; nothing else
 
 ### Control-plane SA — final role set (`dooers-push-runtime@dooers-services` on `dooers-agents`)
 
-- `storage.objectCreator` on `gs://dooers-agents-src` (ingest; **downgraded** from `objectAdmin`)
+- `storage.objectCreator` + `storage.objectViewer` on `gs://dooers-agents-src` (write at ingest, read its own uploads when the webhook re-parses env; **replaces** `objectAdmin`, dropping delete/overwrite)
 - `cloudbuild.builds.editor` (create/poll builds) — keep
 - `run.developer` (deploy via Run Admin API) — **NEW**
 - `compute.loadBalancerAdmin` (LB registration) — keep
@@ -114,27 +114,33 @@ It is deliberately **not** granted `iam.serviceAccountAdmin` or project IAM-admi
 
 ## 4. Pipeline flow (after)
 
+> **Async architecture (current `dooers-push` main `8152039`).** `POST /v1/push` returns **202** after triggering the build; build completion arrives via a Pub/Sub webhook (`POST /v1/internal/build-events`) that runs `finalize_deploy`. The security model is identical; the deploy simply happens in the webhook (still the trusted control plane) instead of in-request, because the image only exists after the build completes. The implementation plan's "Architecture re-baseline" section maps each change onto the async functions.
+
 ```
-dooers push ──▶ POST /v1/push/{agent_id}  (control plane: dooers-push-runtime)
-  1. verify session + agent ownership (core)        [unchanged]
-  2. hosting feature gate (core org settings)        [unchanged]
-  3. resolve org_id → tenant/build SA + repo + prefix [tenancy.py]
+A) dooers push ──▶ POST /v1/push/{agent_id} → 202   (control plane: dooers-push-runtime)
+  1. verify session + agent ownership (core)              [unchanged]
+  2. hosting feature gate (core org settings)             [unchanged]
+  3. resolve org_id → tenant/build SA + repo + prefix     [tenancy.py]
   4. PRECHECK: tenant SA exists? no → 403 org_not_provisioned
-  5. parse .env / env.{env} from the archive (Python) [new: env_files.py]
-  6. upload archive → gs://…/agents/<org_id>/<agent_id>/<ts>-<file>  (objectCreator)
-  7. Cloud Build  (service_account = build-<token>): docker build → docker push   [NO deploy step]
-  8. on success, read image DIGEST from build.results.images[].digest
-  9. DEPLOY via Run Admin API as tenant-<token>, image=<digest>, env=base+overrides,
-     invoker_iam_disabled=true, labels incl. org=<org_id>          [new: gcp/cloudrun.py]
-  10. LB register (loadBalancerAdmin)                 [unchanged]
-  11. patch hostUrl in core (prod only)               [unchanged]
+  5. upload archive → gs://…/agents/<org_id>/<agent_id>/<ts>-<file>  (objectCreator)
+  6. Cloud Build (service_account = build-<token>): docker build → docker push  [NO deploy step]
+  7. write BuildRecord{building, organization_id, gcs_uri}; return 202
+
+B) Cloud Build completes ──▶ Pub/Sub ──▶ POST /v1/internal/build-events  (control plane)
+  8. read image DIGEST from build.results.images[].digest
+  9. re-parse .env / env.{env} from the archive in GCS (Python)  [env_files.py, keeps secrets in source bucket]
+  10. DEPLOY via Run Admin API as tenant-<token>, image=<digest>, env=base+overrides,
+      invoker_iam_disabled=true, labels incl. org=<token>        [gcp/cloudrun.py, in finalize_deploy]
+  11. LB register (loadBalancerAdmin)                    [unchanged]
+  12. patch hostUrl in core (prod only)                  [unchanged]
 ```
 
 Key differences from today:
 
-- **Deploy leaves Cloud Build.** Steps 7 builds+pushes only. The control plane (trusted) does step 9. The build SA has no deploy/run rights and no actAs.
-- **Deploy by digest**, not the mutable tag captured from `build.results.images[].digest`, to prevent a build from swapping the image after push.
-- **Env-file merge moves to Python.** The bash `parse_env_file` in `_build_deploy_script` is replaced by a tested parser that reads `env.{env}` then `.env` from the archive the control plane already holds, preserving the existing semantics (skip blanks/comments, strip inline comments and surrounding whitespace, keep `KEY=VALUE` lines, `env.{env}` then `.env`).
+- **Deploy leaves Cloud Build.** The build (step 6) builds+pushes only as the build SA. The control plane does the deploy in the webhook (step 10). The build SA has no deploy/run rights and no actAs. (Today the build runs a third `gcloud run deploy` step as `agent-deploy-service` — that step is removed.)
+- **Deploy by digest**, not the mutable tag, captured from `build.results.images[].digest`, to prevent a build from swapping the image after push.
+- **Env-file merge moves to Python.** The bash `parse_env_file` in `_build_deploy_script` is replaced by a tested parser. In async it runs at deploy time in the webhook, re-reading the archive from GCS, so agent `.env` secrets stay confined to the source bucket and never land in the GCS-backed build-status store. Semantics preserved (skip blanks/comments, strip inline comments and surrounding whitespace, keep `KEY=VALUE` lines, `env.{env}` then `.env`).
+- **`BuildRecord` carries `organization_id` + `gcs_uri`** so the post-build webhook can resolve the tenant SA and locate the archive.
 - **Per-org image repo + GCS prefix.**
 
 ---
@@ -168,9 +174,10 @@ The request path treats a missing tenant SA as **`org_not_provisioned`** (clear 
 - **`env_files.py` (new):** `parse_env_archive(path, env) -> dict[str,str]` — extract `env.{env}` then `.env` from a `.tar.gz`/`.tgz`/`.zip` and parse to a dict, matching the current bash semantics. Unit-tested against the bash behavior.
 - **`gcp/cloudbuild.py`:** build is now **build + push only** (drop step 3 / `_build_deploy_script`). `service_account` = `build-<token>`. Image URI uses `agents-<token>` repo. `wait_for_build` (or a follow-up read) returns the resolved **digest** from `build.results.images[].digest`. Tags/labels keep `agent`/`owner`/`env` and add `org`.
 - **`gcp/cloudrun.py` (new):** `deploy_service(...)` using `google.cloud.run_v2` — create-or-update the service `agent-<safe>-<env>` with `service_account=tenant-<token>`, `image=<digest>`, merged env, `cpu=1`/`memory=512Mi`/`min=1`/`max=3`/`timeout=300`/startup CPU boost, `invoker_iam_disabled=true` (replicates `--no-invoker-iam-check` for the DRS case), ingress=all, labels incl. `org`. Returns the service URL/identity for logging.
-- **`pipeline/deployer.py`:** orchestrate build (Cloud Build, build+push) → capture digest → deploy (Run API as tenant SA) → LB register. Error handling preserved (failed-step, build-log URL).
-- **`storage.py`:** object path → `agents/<org_id>/<agent_id>/<ts>-<file>`; add `organization_id` to blob metadata. Parse env from the temp archive before deletion (or hand the temp path to `env_files.py`).
-- **`main.py`:** thread `org_id` (already on `agent.organization_id`) into `PipelineContext`; add the `org_not_provisioned` precheck (tenant SA existence) before upload.
+- **`pipeline/deployer.py`:** the post-build `finalize_deploy` / `_finalize_success` (run by the Pub/Sub webhook) gains the deploy: read digest from the `build` object → re-parse env from the archive in GCS → deploy (Run API as tenant SA, by digest) → LB register. The legacy synchronous `DeployerStep` only adopts the new `trigger_build` signature. Error handling preserved (failed-step, build-log URL).
+- **`build_store.py`:** `BuildRecord` gains `organization_id` + `gcs_uri` so the post-build webhook can resolve the tenant SA and locate the archive.
+- **`storage.py`:** object path → `agents/<org_id>/<agent_id>/<ts>-<file>`; add `organization_id` to blob metadata.
+- **`main.py`:** push route adds the `org_not_provisioned` precheck (tenant SA existence) before upload, passes `org_id` to upload, and persists `organization_id`/`gcs_uri` on the `BuildRecord`; the `build_events` webhook rehydrates them onto the reconstructed `PipelineContext`.
 - **`settings.py`:** add config as needed (e.g., source bucket already present; tenant/build SA + repo are derived, not configured). Remove the hard-coded `agent-deploy-service` assumption.
 - **`provision.py` (new):** the provisioning CLI in §5.
 - **Tests:** tenancy naming, env parser parity, digest capture, Run-API request construction (tenant SA + digest + labels + `invoker_iam_disabled`), provisioning idempotency (mock `subprocess`/gcloud), `org_not_provisioned` path. Update existing `test_cloudbuild_*` for the removed deploy step.
@@ -197,7 +204,7 @@ Production has no real users; the 4 live agents must not break. All steps are ad
 
 **Phase 1 — provision existing orgs (additive).** Run `provision-org <org_id>` for each distinct org of the 4 agents. Creates `build-/tenant-` SAs, `agents-<token>` repos, and all bindings (incl. control-plane `serviceAccountUser`). Zero impact on running services.
 
-**Phase 2 — control-plane roles (additive).** Grant `dooers-push-runtime` `run.developer` on `dooers-agents`. Downgrade its bucket binding `objectAdmin → objectCreator`.
+**Phase 2 — control-plane roles (additive).** Grant `dooers-push-runtime` `run.developer` on `dooers-agents`. Replace its bucket binding `objectAdmin` with `objectViewer` + `objectCreator` (read its own uploads at deploy + write at ingest; drops delete/overwrite).
 
 **Phase 3 — deploy new control plane.** Build + deploy the new `dooers-push` image to `dooers-services`. New pushes now use the new model.
 
