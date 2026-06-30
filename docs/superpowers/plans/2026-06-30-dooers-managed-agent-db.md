@@ -181,26 +181,35 @@ def agent_db_name(agent_id: str) -> str:
   - `async def ensure_agent_db(conn, agent_id: str, iam_user: str) -> str` — `CREATE DATABASE` (if absent) + `GRANT`s; returns db name.
   - `async def drop_agent_db(conn, agent_id: str) -> None` (Phase 2).
 
-- [ ] **Step 1: Write the failing test** (assert the exact SQL statements issued, db-name interpolated, iam_user quoted)
+- [ ] **Step 1: Write the failing test** (assert the exact SQL: db created/owned by the IAM user, db-name interpolated from the validated helper, iam_user double-quoted)
 ```python
 import asyncio
 from unittest.mock import AsyncMock
 from dbprovisioner.provisioner import ensure_agent_db
 
-def test_ensure_agent_db_creates_and_grants():
+def test_ensure_agent_db_creates_owned_by_iam_user():
     conn = AsyncMock()
     conn.fetchval = AsyncMock(return_value=None)  # db does not exist
     name = asyncio.run(ensure_agent_db(conn, "50f823c0-06b7-4447-948d-551b43ddba63",
                                        "tenant-84601f39ecd0@dooers-agents.iam"))
     sql = " ".join(c.args[0] for c in conn.execute.call_args_list)
     assert name == "agent_50f823c0_06b7_4447_948d_551b43ddba63"
-    assert "CREATE DATABASE agent_50f823c0_06b7_4447_948d_551b43ddba63" in sql
-    assert 'GRANT CONNECT ON DATABASE agent_50f823c0_06b7_4447_948d_551b43ddba63 TO "tenant-84601f39ecd0@dooers-agents.iam"' in sql
+    assert ('CREATE DATABASE agent_50f823c0_06b7_4447_948d_551b43ddba63 '
+            'OWNER "tenant-84601f39ecd0@dooers-agents.iam"') in sql
+
+def test_ensure_agent_db_idempotent_realigns_owner():
+    conn = AsyncMock()
+    conn.fetchval = AsyncMock(return_value=1)  # db already exists
+    asyncio.run(ensure_agent_db(conn, "50f823c0-06b7-4447-948d-551b43ddba63",
+                                "tenant-84601f39ecd0@dooers-agents.iam"))
+    sql = " ".join(c.args[0] for c in conn.execute.call_args_list)
+    assert "ALTER DATABASE agent_50f823c0_06b7_4447_948d_551b43ddba63 OWNER TO" in sql
+    assert "CREATE DATABASE" not in sql
 ```
 
 - [ ] **Step 2: Run → FAIL.**
 
-- [ ] **Step 3: Implement** — db name from `agent_db_name` (validated, safe to interpolate); IAM user double-quoted; CREATE DATABASE guarded by existence check (CREATE DATABASE can't run in a txn / `IF NOT EXISTS` unsupported pre-PG, so check `pg_database` first); then connect to the new db to `GRANT CREATE/USAGE ON SCHEMA public`:
+- [ ] **Step 3: Implement** — db name from `agent_db_name` (validated → safe to interpolate); IAM user double-quoted. `CREATE DATABASE` can't run in a transaction and has no `IF NOT EXISTS`, so guard with a `pg_database` existence check (benign TOCTOU — concurrent pushes of the *same* agent are rate-limited/serial; `ALTER OWNER` on the exists-path is idempotent). **Owning the database** is what grants the creator full control (schema/tables) — no separate CONNECT/schema GRANTs needed (the owner is implicitly a member of `pg_database_owner`, which owns `public` on PG15+):
 ```python
 from dbprovisioner.naming import agent_db_name
 
@@ -209,12 +218,12 @@ async def ensure_agent_db(conn, agent_id: str, iam_user: str) -> str:
     user = '"' + iam_user.replace('"', '""') + '"'
     exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", db)
     if not exists:
-        await conn.execute(f"CREATE DATABASE {db}")
-    await conn.execute(f"GRANT CONNECT ON DATABASE {db} TO {user}")
-    # schema privileges are granted on a connection INTO the new db (see service layer)
+        await conn.execute(f"CREATE DATABASE {db} OWNER {user}")
+    else:
+        await conn.execute(f"ALTER DATABASE {db} OWNER TO {user}")
     return db
 ```
-(Note in the service layer: open a second connection to `db` and run `GRANT USAGE, CREATE ON SCHEMA public TO {user}` so the creator can make tables.)
+(The service layer connects to the maintenance `postgres` db as the admin IAM user to run this — no second connection / schema-grant pass needed.)
 
 - [ ] **Step 4: PASS. Step 5: Commit** `feat(dbprovisioner): ensure_agent_db SQL (create + grant)`.
 

@@ -38,7 +38,7 @@ This replaces, for opted-in agents, today's model where creators self-provide `A
 `database.type` ∈ {`dooers`, `postgres`, `none`}; default `postgres` (back-compat — today's self-provided behavior). Lives in:
 
 - **`dooers.yaml`** (creator-facing manifest): a `database:` block.
-- **core agent record**: `database` object, returned by `GET /api/v2/agents/:id` (the push service already reads the agent record).
+- **core agent record**: `database` object, returned by `GET /api/v2/agents/:id` and writable via `PATCH`. **⚠ Critical-path external dependency:** core is a separate service/team and must ship this field before the push side can detect `dooers`. This is the first thing to coordinate — until core returns `database.type`, push always sees the default and managed-DB never triggers. (Interim unblock for testing: read it from the uploaded `dooers.yaml` in the archive, but core is the source of truth.)
 - **SDK** (`dooers-service-agent`): `database_type="dooers"` becomes a valid value (alongside `sqlite`/`postgres`/`cosmos`).
 
 Semantics: `dooers` → platform-managed (this feature); `postgres` → creator's own `AGENT_DATABASE_*` (unchanged); `none` → no DB.
@@ -56,9 +56,11 @@ B) dooers push  (per agent, only when agent.database.type == "dooers")
      push control plane ──OIDC──▶ db-provisioner  (Cloud Run in dooers-agents)
         db-provisioner (VPC egress to AlloyDB private IP; auth = its own AlloyDB
         admin IAM user — no stored password):
-            CREATE DATABASE agent_<id>           (idempotent)
-            GRANT CONNECT ON DATABASE agent_<id> TO "tenant-<token>@…";
-            GRANT CREATE/USAGE on schema public  (so the creator can make tables)
+            CREATE DATABASE agent_<id> OWNER "tenant-<token>@…"   (idempotent;
+              ALTER DATABASE … OWNER TO … if it already exists)
+            # owning the database gives the tenant user full control of its own
+            # schema/tables (via pg_database_owner on PG15+), so no separate
+            # CONNECT / schema GRANTs are needed.
      then deploy the agent Cloud Run (in finalize_deploy) with:
         • Direct VPC egress into dooers-agents-vpc  (subnet in southamerica-east1)
         • env: AGENT_DATABASE_TYPE=dooers
@@ -86,7 +88,7 @@ A small FastAPI Cloud Run service (`dooers-db-provisioner`) — single responsib
 - **Network:** Direct VPC egress into `dooers-agents-vpc` to reach the AlloyDB private IP.
 - **Auth:** invoker restricted to the push control plane (`dooers-push-runtime`) via OIDC (mirrors the build-events webhook pattern).
 - **API:**
-  - `POST /v1/agent-db {agent_id, org_token}` → `CREATE DATABASE agent_<id>` (if absent) + GRANTs to `tenant-<token>@…`. Idempotent. Returns the resolved db name.
+  - `POST /v1/agent-db {agent_id, org_token}` → `CREATE DATABASE agent_<id> OWNER "tenant-<token>@…"` (or `ALTER DATABASE … OWNER TO …` if it already exists). Idempotent. Returns the resolved db name. Ownership (not separate GRANTs) is what lets the creator make/use tables.
   - `DELETE /v1/agent-db/{agent_id}` → `DROP DATABASE agent_<id>` (Phase 2 / teardown).
 - **Why a separate service:** keeps the AlloyDB admin identity + VPC path out of both the request-serving push service and the agents.
 
@@ -102,7 +104,8 @@ A small FastAPI Cloud Run service (`dooers-db-provisioner`) — single responsib
 
 ## 7. Security properties
 
-- The tenant SA's IAM DB user is granted **only its org's agent databases** → cannot read/write other orgs' data (Postgres GRANTs + IAM), even on a shared cluster.
+- The tenant SA's IAM DB user owns/can reach **only its org's agent databases** → cannot read/write other orgs' data, even on a shared cluster (it has no grant on other orgs' databases).
+- **Within an org there is no inter-agent DB isolation** — all of an org's agents run as the same tenant SA / IAM user, which owns each of that org's agent databases. This is by design (same trust domain, consistent with the shared per-org compute identity). Per-agent DB isolation would require per-agent SAs, which we deliberately don't do.
 - DB-admin credential + VPC path live **only in the db-provisioner**, callable **only by the push control plane**. Agents and the request-serving push service never hold DB-admin.
 - No passwords anywhere — IAM token auth end-to-end.
 - Agents reach AlloyDB over **private IP in the VPC**; no public DB exposure.
