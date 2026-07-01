@@ -1,5 +1,34 @@
 # Dooers-managed Agent Database Implementation Plan
 
+> **Status (2026-07-02): Phase 1 code IMPLEMENTED end-to-end with TDD** on branch
+> `feat/managed-agent-db` across dooers-cli, dooers-push, dooers-agents-server.
+> Phase F (GCP infra) is delivered as a runbook, not executed —
+> `dooers-push/docs/managed-agent-db-runbook.md`.
+>
+> **Deviations from the plan as written (all deliberate, reconciled against the real code):**
+> - **SDK repo/shape:** the SDK is `dooers-agents-server` (package `dooers.agents.server`,
+>   an `AgentConfig` *dataclass* + `AgentServer`/`PostgresPersistence`), NOT a
+>   `dooers-service-agent` with pydantic settings/`Agent`/`ensure_rag_schema`. E1/E2
+>   were implemented against the real shape: extend `AgentConfig.database_type` Literal +
+>   add `database_instance_uri`; add `DooersPersistence(PostgresPersistence)` overriding
+>   `connect()`; select it via a new `_build_persistence()` factory.
+> - **Trigger source:** detection is from the **manifest in the uploaded archive**
+>   (`dooers.yaml` → `database.type`), parsed at **deploy time** in
+>   `_deploy_agent_service` — NOT from a core `AgentRecord.database_type` and NOT carried
+>   on `BuildRecord` (Task D1 folded into the deploy path). No core-team dependency;
+>   structured so a core field can layer on later.
+> - **Env contract:** creator sets `AgentConfig(database_type="dooers")` in code; push
+>   injects `AGENT_DATABASE_INSTANCE` (new SDK field) + reuses `AGENT_DATABASE_USER`
+>   (IAM principal) + `AGENT_DATABASE_NAME` (`agent_<id>`). No `AGENT_DATABASE_TYPE`/
+>   `AGENT_DATABASE_IAM_USER` injected.
+> - **Manifest field:** lives on `dooers.protocol.agents.AgentManifest` as a `database`
+>   block (`DatabaseConfig.type`), following the `hosting` precedent (⇒ a dooers-protocol
+>   release + CLI repin is needed before PyPI installs accept `database:`; the editable
+>   sibling already works for local dev/tests).
+> - **db-provisioner packaging:** `dbprovisioner/` uses `requirements.txt` + a
+>   COPY-and-run Dockerfile (built from repo root) rather than a pip-installable
+>   `pyproject.toml` (cleaner for the namespaced module layout).
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let a creator set `database.type: dooers` and have the platform auto-provision a per-agent AlloyDB database, bind it to the org's tenant SA via IAM, and have the agents-server SDK connect to it at runtime with no passwords.

@@ -105,6 +105,33 @@ hosting: true
     assert any("localhost" in i.message.lower() for i in issues)
 
 
+def test_validate_skips_localhost_db_warning_when_managed(tmp_path: Path) -> None:
+    """With `database.type: dooers` the platform provisions the DB, so a local
+    localhost AGENT_DATABASE_HOST (used for `postgres` local dev) must not warn."""
+    _write(
+        tmp_path / "dooers.yaml",
+        """
+protocol_version: "2"
+agent_id: "550e8400-e29b-41d4-a716-446655440000"
+name: test
+organization_id: "org_1"
+hosting: true
+database:
+  type: dooers
+""".strip()
+        + "\n",
+    )
+    _write(tmp_path / "Dockerfile", "FROM python:3.12-slim\n")
+    _write(
+        tmp_path / "pyproject.toml",
+        '[project]\ndependencies = ["dooers-agents-server>=0.12.0"]\n',
+    )
+    _write(tmp_path / ".env", "AGENT_DATABASE_HOST=127.0.0.1\n")
+
+    issues = collect_issues(tmp_path)
+    assert not any("localhost" in i.message.lower() for i in issues)
+
+
 def test_validate_warns_when_hosting_without_env_prod(tmp_path: Path) -> None:
     _write(
         tmp_path / "dooers.yaml",
