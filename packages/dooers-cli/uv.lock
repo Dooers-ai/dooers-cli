@@ -232,7 +232,7 @@ toml = [
 
 [[package]]
 name = "dooers-cli"
-version = "0.7.3"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "dooers-protocol" },
@@ -278,7 +278,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "dooers-protocol"
-version = "0.6.1"
+version = "0.7.0"
 source = { editable = "../dooers-protocol" }
 dependencies = [
     { name = "pydantic" },
