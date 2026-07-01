@@ -1,7 +1,7 @@
 # Dooers-managed agent database — design
 
 **Audience:** Dooers platform / DevOps
-**Status:** Approved design — ready to plan
+**Status:** Approved — **ready to implement.** Follow the task-by-task plan: [`../plans/2026-06-30-dooers-managed-agent-db.md`](../plans/2026-06-30-dooers-managed-agent-db.md). All design decisions are settled (§2); no further design work is required before coding. Start with the core `database.type` field coordination (§4, critical path), then Phase 1 Tasks A1→E2.
 **Scope:** `dooers-service-agent` (SDK connection), `dooers-push` (per-agent provisioning trigger + VPC deploy), a new **db-provisioner** service in `dooers-agents`, `provision-org` extension, core/`AgentConfig` + `dooers.yaml` (config field), AlloyDB infra.
 **Builds on:** [`2026-06-25-per-tenant-service-account-isolation-design.md`](./2026-06-25-per-tenant-service-account-isolation-design.md). This is the deferred "per-org database" follow-up; it attaches to the existing per-org **tenant SA** (`tenant-<token>`).
 
