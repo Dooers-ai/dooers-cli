@@ -5,6 +5,7 @@ from dooers.protocol.agents import (
     AgentManifest,
     AgentRecord,
     CreateAgentRequest,
+    DatabaseConfig,
     ProfileConfig,
     SuggestedPrompt,
     UiConfig,
@@ -190,3 +191,60 @@ def test_manifest_hosting_can_be_disabled():
         }
     )
     assert m.hosting is False
+
+
+# --- database block (Dooers-managed DB opt-in) ---
+
+
+def test_manifest_database_defaults_to_postgres():
+    """Omitting `database` yields the back-compat default (creator self-provided)."""
+    m = AgentManifest(
+        protocol_version="2", agent_id="a1", name="A", organization_id="o1"
+    )
+    assert m.database.type == "postgres"
+    # Round-trips through the dumped dict written to dooers.yaml.
+    assert m.model_dump(mode="json")["database"] == {"type": "postgres"}
+
+
+def test_manifest_database_type_dooers_accepted():
+    m = AgentManifest.model_validate(
+        {
+            "protocol_version": "2",
+            "agent_id": "a1",
+            "name": "A",
+            "organization_id": "o1",
+            "database": {"type": "dooers"},
+        }
+    )
+    assert m.database.type == "dooers"
+
+
+def test_manifest_database_type_none_accepted():
+    m = AgentManifest.model_validate(
+        {
+            "protocol_version": "2",
+            "agent_id": "a1",
+            "name": "A",
+            "organization_id": "o1",
+            "database": {"type": "none"},
+        }
+    )
+    assert m.database.type == "none"
+
+
+def test_manifest_database_type_invalid_rejected():
+    with pytest.raises(ValidationError):
+        AgentManifest.model_validate(
+            {
+                "protocol_version": "2",
+                "agent_id": "a1",
+                "name": "A",
+                "organization_id": "o1",
+                "database": {"type": "mysql"},
+            }
+        )
+
+
+def test_database_config_extra_forbid():
+    with pytest.raises(ValidationError):
+        DatabaseConfig(type="dooers", bogus="nope")  # type: ignore[call-arg]

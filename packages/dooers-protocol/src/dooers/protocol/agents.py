@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentRecord(BaseModel):
@@ -57,6 +57,18 @@ class UiConfig(BaseModel):
     suggested_prompts: list[SuggestedPrompt] = []
 
 
+class DatabaseConfig(BaseModel):
+    """Which database backend the agent uses.
+
+    - ``dooers``   → platform-managed per-agent AlloyDB (provisioned on push,
+                     connected via IAM by the agents-server SDK; no passwords).
+    - ``postgres`` → creator self-provides ``AGENT_DATABASE_*`` (default; unchanged).
+    - ``none``     → the agent runs without a database.
+    """
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["dooers", "postgres", "none"] = "postgres"
+
+
 class AgentManifest(BaseModel):
     """Schema of `dooers.yaml`. Written by `dooers agents create`, applied by `dooers push`."""
     model_config = ConfigDict(extra="forbid")
@@ -73,6 +85,9 @@ class AgentManifest(BaseModel):
     # authoritative gate (enforced by dooers-push); this is declarative + a
     # fast client-side guard in `dooers push`.
     hosting: bool = True
+    # Database backend. `dooers` opts into the platform-managed per-agent DB;
+    # `dooers push` reads this to provision + inject the connection env.
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     whatsapp: WhatsAppConfig | None = None
     profile: ProfileConfig | None = None
     ui: UiConfig | None = None
