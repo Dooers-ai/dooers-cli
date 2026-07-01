@@ -75,7 +75,9 @@ def create(
             "Set Agent access key in Studio and AGENT_SEED_SECRET in env.prod before push.",
             err=True,
         )
-    typer.echo("Edit dooers.yaml (message_path, whatsapp, profile) then run dooers push.")
+    typer.echo(
+        "Edit dooers.yaml (message_path, whatsapp, profile, database) then run dooers push."
+    )
 
 
 @app.command("rotate-key")

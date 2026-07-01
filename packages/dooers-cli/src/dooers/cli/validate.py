@@ -93,28 +93,33 @@ def collect_issues(root: Path | None = None) -> list[ValidationIssue]:
                 )
             )
 
-    for env_path in [base / ".env", *base.glob("env.*")]:
-        if not env_path.is_file():
-            continue
-        for raw in env_path.read_text().splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            if key.strip().upper() in {
-                "AGENT_DATABASE_HOST",
-                "DATABASE_HOST",
-                "POSTGRES_HOST",
-            } and value.strip().lower() in {"127.0.0.1", "localhost", "0.0.0.0"}:
-                issues.append(
-                    ValidationIssue(
-                        "warning",
-                        f"{env_path.name} sets {key.strip()} to localhost — "
-                        "hosted deploys need a cloud database configured in Dooers Studio",
-                    )
-                )
-
     manifest = read_manifest(directory=base) if manifest_path.exists() else None
+
+    # A `dooers`-managed DB is provisioned by the platform and connected via IAM,
+    # so a local localhost AGENT_DATABASE_HOST (for `postgres` local dev) is expected.
+    managed_db = manifest is not None and manifest.database.type == "dooers"
+    if not managed_db:
+        for env_path in [base / ".env", *base.glob("env.*")]:
+            if not env_path.is_file():
+                continue
+            for raw in env_path.read_text().splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                if key.strip().upper() in {
+                    "AGENT_DATABASE_HOST",
+                    "DATABASE_HOST",
+                    "POSTGRES_HOST",
+                } and value.strip().lower() in {"127.0.0.1", "localhost", "0.0.0.0"}:
+                    issues.append(
+                        ValidationIssue(
+                            "warning",
+                            f"{env_path.name} sets {key.strip()} to localhost — "
+                            "hosted deploys need a cloud database configured in Dooers Studio",
+                        )
+                    )
+
     if manifest is not None and manifest.hosting and not (base / "env.prod").is_file():
         issues.append(
             ValidationIssue(
